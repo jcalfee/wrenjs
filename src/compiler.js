@@ -1,4 +1,6 @@
 
+require('./common.js');
+
 // This is written in bottom-up order, so the tokenization comes first, then
 // parsing/code generation. This minimizes the number of explicit forward
 // declarations needed.
@@ -363,7 +365,7 @@ function lexError(parser) {
     }
   });
 
-  throw(err + "\n");
+  console.log(err + "\n");
 }
 
 // Outputs a compile or syntax error. This also marks the compilation as having
@@ -408,7 +410,7 @@ function error(compiler) {
     }
   });
 
-  throw(err + "\n");
+  console.log(err + "\n");
 }
 
 // Adds [constant] to the constant pool and returns its index.
@@ -484,6 +486,8 @@ function initCompiler(compiler, parser, parent, isFunction) {
 }
 
 // Lexing ----------------------------------------------------------------------
+
+// TODO: Turn Keyword into an enum.
 
 // Keyword class
 var Keyword = function(identifier, length, tokenType) {
