@@ -341,13 +341,13 @@ var Variable = {
 
 // The stack effect of each opcode. The index in the array is the opcode, and
 // the value is the stack effect of that instruction.
-var stackEffects = OPCODES; // opcodes.js
+var stackEffects;// = require('opcodes.js'); // TODO opcodes.js
 
 // Outputs a compile or syntax error. This also marks the compilation as having
 // an error, which ensures that the resulting code will be discarded and never
 // run. This means that after calling lexError(), it's fine to generate whatever
 // invalid bytecode you want since it won't be used.
-function lexError(parser, format) {
+function lexError(parser) {
   'use strict';
 
   parser.hasError = true;
@@ -358,7 +358,7 @@ function lexError(parser, format) {
   var err = "[" + parser.module.name.value + " line " + parser.currentLine + "] Error: ";
 
   arguments.forEach(function(arg, i, args) {
-    if (i > 1) {
+    if (i > 0) {
       err += args[arg];
     }
   });
@@ -374,7 +374,7 @@ function lexError(parser, format) {
 // You'll note that most places that call error() continue to parse and compile
 // after that. That's so that we can try to find as many compilation errors in
 // one pass as possible instead of just bailing at the first one.
-function error(compiler, format) {
+function error(compiler) {
   'use strict';
 
   compiler.parser.hasError = true;
@@ -382,7 +382,8 @@ function error(compiler, format) {
     return;
   }
 
-  var token = compiler.parser.previous;
+  var err,
+      token = compiler.parser.previous;
 
   // If the parse error was caused by an error token, the lexer has already
   // reported it.
@@ -390,7 +391,7 @@ function error(compiler, format) {
     return;
   }
 
-  var err = "[" + compiler.parser.module.name.value +
+  err = "[" + compiler.parser.module.name.value +
     " line " + token.line + "] Error at ";
 
   if (token.type === TokenType.TOKEN_LINE) {
@@ -568,6 +569,7 @@ function matchChar(parser, c) {
 // Sets the parser's current token to the given [type] and current character
 // range.
 function makeToken(parser,type) {
+  'use strict';
   parser.current.type = type;
   parser.current.start = parser.tokenStart;
   parser.current.length = (parser.currentChar - parser.tokenStart);
@@ -593,4 +595,119 @@ function skipLineComment(parser) {
   while (peekChar(parser) !== '\n' && peekChar(parser) !== '\0') {
     nextChar(parser);
   }
+}
+
+// Skips the rest of a block comment.
+function skipBlockComment(parser) {
+  'use strict';
+  var nesting = 1;
+  while (nesting > 0) {
+    if (peekChar(parser) === '\0') {
+      lexError(parser, "Unterminated block comment.");
+      return;
+    }
+
+    if (peekChar(parser) === '/' && peekNextChar(parser) === '*') {
+      nextChar(parser);
+      nextChar(parser);
+      nesting += 1;
+      continue;
+    }
+
+    if (peekChar(parser) === '*' && peekNextChar(parser) === '/') {
+      nextChar(parser);
+      nextChar(parser);
+      nesting -= 1;
+      continue;
+    }
+
+    // Regular comment character.
+    nextChar(parser);
+  }
+}
+
+// Reads the next character, which should be a hex digit (0-9, a-f, or A-F) and
+// returns its numeric value. If the character isn't a hex digit, returns -1.
+function readHexDigit(parser) {
+  'use strict';
+  var c = nextChar(parser);
+  if (c >= '0' && c <= '9') {
+    return c - '0';
+  }
+  if (c >= 'a' && c <= 'f') {
+    return c - 'a' + 10;
+  }
+  if (c >= 'A' && c <= 'F') {
+    return c - 'A' + 10;
+  }
+
+  // Don't consume it if it isn't expected. Keeps us from reading past the end
+  // of an unterminated string.
+  parser.currentChar -= 1;
+  return -1;
+}
+
+// Parses the numeric value of the current token.
+function makeNumber(parser, isHex) {
+  'use strict';
+  var errno = 0;
+
+  // We don't check that the entire token is consumed because we've already
+  // scanned it ourselves and know it's valid.
+  parser.current.value = NUM_VAL(isHex ? strtol(parser.tokenStart, null, 16)
+                                        : strtod(parser.tokenStart, null));
+
+  if (errno === ERANGE) {
+    lexError(parser, "Number literal was too large.");
+    parser.current.value = NUM_VAL(0);
+  }
+
+  makeToken(parser, TokenType.TOKEN_NUMBER);
+}
+
+// Finishes lexing a hexadecimal number literal.
+function readHexNumber(parser) {
+  'use strict';
+  // Skip past the `x` used to denote a hexadecimal literal.
+  nextChar(parser);
+
+  // Iterate over all the valid hexadecimal digits found.
+  while (readHexDigit(parser) !== -1) {
+    continue;
+  }
+
+  makeNumber(parser, true);
+}
+
+// Finishes lexing a number literal.
+function readNumber(parser) {
+  'use strict';
+  while (isDigit(peekChar(parser))) {
+    nextChar(parser);
+  }
+
+  // See if it has a floating point. Make sure there is a digit after the "."
+  // so we don't get confused by method calls on number literals.
+  if (peekChar(parser) === '.' && isDigit(peekNextChar(parser))) {
+    nextChar(parser);
+    while (isDigit(peekChar(parser))) {
+      nextChar(parser);
+    }
+  }
+
+  // See if the number is in scientific notation.
+  if (matchChar(parser, 'e') || matchChar(parser, 'E')) {
+    // Allow a negative exponent.
+    matchChar(parser, '-');
+
+    if (!isDigit(peekChar(parser))) {
+      lexError(parser, "Unterminated scientific notation.");
+    }
+
+    while (isDigit(peekChar(parser))) {
+      nextChar(parser);
+    }
+  }
+
+  makeNumber(parser, false);
 }
