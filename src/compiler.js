@@ -22,7 +22,7 @@ module.exports = {
   sCompiler: sCompiler,
 
   // Compiles [source], a string of Wren source code located in [module], to an
-  // [ObjFn] that will execute that code when invoked. Returns `NULL` if the
+  // [ObjFn] that will execute that code when invoked. Returns `null` if the
   // source contains any syntax errors.
   //
   // If [printErrors] is `true`, any compile errors are output to stderr.
@@ -166,44 +166,44 @@ var TokenType = {
 };
 
 var Token = {
-  type: undefined,
+  type: null,
 
   // The beginning of the token, pointing directly into the source.
-  start: undefined,
+  start: null,
 
   // The length of the token in characters.
-  length: undefined,
+  length: null,
 
   // The 1-based line where the token appears.
-  line: undefined,
+  line: null,
 
   // The parsed value if the token is a literal.
-  value: undefined
+  value: null
 };
 
 var Parser = {
-  vm: undefined,
+  vm: null,
 
   // The module being parsed.
-  module: undefined,
+  module: null,
 
   // The source code being parsed.
-  source: undefined,
+  source: null,
 
   // The beginning of the currently-being-lexed token in [source].
-  tokenStart: undefined,
+  tokenStart: null,
 
   // The current character being lexed in [source].
-  currentChar: undefined,
+  currentChar: null,
 
   // The 1-based line number of [currentChar].
-  currentLine: undefined,
+  currentLine: null,
 
   // The most recently lexed token.
-  current: undefined,
+  current: null,
 
   // The most recently consumed/advanced token.
-  previous: undefined,
+  previous: null,
 
   // Tracks the lexing state when tokenizing interpolated strings.
   //
@@ -219,62 +219,62 @@ var Parser = {
   // level of current interpolation nesting. Each value is the number of
   // unmatched "(" that are waiting to be closed.
   parens: [],
-  numParens: undefined,
+  numParens: null,
 
   // If subsequent newline tokens should be discarded.
-  skipNewlines: undefined,
+  skipNewlines: null,
 
   // Whether compile errors should be printed to stderr or discarded.
-  printErrors: undefined,
+  printErrors: null,
 
   // If a syntax or compile error has occurred.
-  hasError: undefined
+  hasError: null
 };
 
 var Local = {
   // The name of the local variable. This points directly into the original
   // source code string.
-  name: undefined,
+  name: null,
 
   // The length of the local variable's name.
-  length: undefined,
+  length: null,
 
   // The depth in the scope chain that this variable was declared at. Zero is
   // the outermost scope--parameters for a method, or the first local block in
   // top level code. One is the scope within that, etc.
-  depth: undefined,
+  depth: null,
 
   // If this local variable is being used as an upvalue.
-  isUpvalue: undefined
+  isUpvalue: null
 };
 
 var CompilerUpvalue = {
   // True if this upvalue is capturing a local variable from the enclosing
   // function. False if it's capturing an upvalue.
-  isLocal: undefined,
+  isLocal: null,
 
   // The index of the local or upvalue being captured in the enclosing function.
-  index: undefined
+  index: null
 };
 
 // Bookkeeping information for the current loop being compiled.
 var Loop = {
   // Index of the instruction that the loop should jump back to.
-  start: undefined,
+  start: null,
 
   // Index of the argument for the CODE_JUMP_IF instruction used to exit the
   // loop. Stored so we can patch it once we know where the loop ends.
-  exitJump: undefined,
+  exitJump: null,
 
   // Index of the first instruction of the body of the loop.
-  body: undefined,
+  body: null,
 
   // Depth of the scope(s) that need to be exited if a break is hit inside the
   // loop.
-  scopeDepth: undefined,
+  scopeDepth: null,
 
-  // The loop enclosing this one, or NULL if this is the outermost loop.
-  enclosing: undefined
+  // The loop enclosing this one, or null if this is the outermost loop.
+  enclosing: null
 };
 
 // The different signature syntaxes for different kinds of methods.
@@ -302,39 +302,39 @@ var SignatureType = {
 };
 
 var Signature = {
-  name: undefined,
-  length: undefined,
-  type: undefined,
-  arity: undefined
+  name: null,
+  length: null,
+  type: null,
+  arity: null
 };
 
 // Bookkeeping information for compiling a class definition.
 var ClassCompiler = {
   // Symbol table for the fields of the class.
-  fields: undefined,
+  fields: null,
 
   // True if the class being compiled is a foreign class.
-  isForeign: undefined,
+  isForeign: null,
 
   // True if the current method being compiled is static.
-  inStatic: undefined,
+  inStatic: null,
 
   // The signature of the method being compiled.
-  signature: undefined
+  signature: null
 };
 
 var sCompiler = {
-  parser: undefined,
+  parser: null,
 
-  // The compiler for the function enclosing this one, or NULL if it's the
+  // The compiler for the function enclosing this one, or null if it's the
   // top level.
-  parent: undefined,
+  parent: null,
 
   // The currently in scope local variables.
   locals: [],
 
   // The number of local variables currently in scope.
-  numLocals: undefined,
+  numLocals: null,
 
   // The upvalues that this function has captured from outer scopes. The count
   // of them is stored in [numUpvalues].
@@ -343,7 +343,7 @@ var sCompiler = {
   // The current level of block scope nesting, where zero is no nesting. A -1
   // here means top-level code is being compiled and there is no block scope
   // in effect at all. Any variables declared will be module-level.
-  copeDepth: undefined,
+  copeDepth: null,
 
   // The current number of slots (locals and temporaries) in use.
   //
@@ -355,16 +355,16 @@ var sCompiler = {
   // This value here doesn't include parameters to the function. Since those
   // are already pushed onto the stack by the caller and tracked there, we
   // don't need to double count them here.
-  numSlots: undefined,
+  numSlots: null,
 
-  // The current innermost loop being compiled, or NULL if not in a loop.
-  loop: undefined,
+  // The current innermost loop being compiled, or null if not in a loop.
+  loop: null,
 
   // If this is a compiler for a method, keeps track of the class enclosing it.
-  enclosingClass: undefined,
+  enclosingClass: null,
 
   // The function being compiled.
-  fn: undefined
+  fn: null
 };
 
 // Describes where a variable is declared.
@@ -383,10 +383,10 @@ var Scope = {
 // enough information to emit correct code to load or store the variable.
 var Variable = {
   // The stack slot, upvalue slot, or module symbol defining the variable.
-  index: undefined,
+  index: null,
 
   // Where the variable is declared.
-  scope: undefined
+  scope: null
 };
 
 // The stack effect of each opcode. The index in the array is the opcode, and
@@ -498,7 +498,7 @@ function initCompiler (compiler, parser, parent, isFunction) {
   compiler.loop = null;
   compiler.enclosingClass = null;
 
-  // Initialize this to NULL before allocating in case a GC gets triggered in
+  // Initialize this to null before allocating in case a GC gets triggered in
   // the middle of initializing the compiler.
   compiler.fn = null;
 
@@ -810,8 +810,7 @@ function readHexEscape(parser, digits, description) {
 }
 
 // Reads a hex digit Unicode escape sequence in a string literal.
-function readUnicodeEscape(parser, string, length)
-{
+function readUnicodeEscape(parser, string, length) {
   var value = readHexEscape(parser, length, "Unicode");
 
   // Grow the buffer enough for the encoded result.
@@ -995,9 +994,9 @@ function nextToken(parser) {
       case '\r':
       case '\t':
         // Skip forward until we run out of whitespace.
-        while (peekChar(parser) == ' ' ||
-               peekChar(parser) == '\r' ||
-               peekChar(parser) == '\t') {
+        while (peekChar(parser) === ' ' ||
+               peekChar(parser) === '\r' ||
+               peekChar(parser) === '\t') {
           nextChar(parser);
         }
         break;
@@ -1005,12 +1004,12 @@ function nextToken(parser) {
       case '"': readString(parser); return;
       case '_':
         readName(parser,
-                 peekChar(parser) == '_' ? TokenType.TOKEN_STATIC_FIELD : TokenType.TOKEN_FIELD);
+                 peekChar(parser) === '_' ? TokenType.TOKEN_STATIC_FIELD : TokenType.TOKEN_FIELD);
         return;
 
       case '#':
         // Ignore shebang on the first line.
-        if (peekChar(parser) == '!' && parser.currentLine == 1) {
+        if (peekChar(parser) === '!' && parser.currentLine === 1) {
           skipLineComment(parser);
           break;
         }
@@ -1019,7 +1018,7 @@ function nextToken(parser) {
         return;
 
       case '0':
-        if (peekChar(parser) == 'x') {
+        if (peekChar(parser) === 'x') {
           readHexNumber(parser);
           return;
         }
@@ -1029,7 +1028,7 @@ function nextToken(parser) {
 
       default:
         if (isName(c)) {
-          readName(parser, TOKEN_NAME);
+          readName(parser, TokenType.TOKEN_NAME);
         } else if (isDigit(c)) {
           readNumber(parser);
         } else {
@@ -1041,7 +1040,7 @@ function nextToken(parser) {
 
   // If we get here, we're out of source, so just make EOF tokens.
   parser.tokenStart = parser.currentChar;
-  makeToken(parser, TOKEN_EOF);
+  makeToken(parser, TokenType.TOKEN_EOF);
 }
 
 // Parsing ---------------------------------------------------------------------
@@ -1075,8 +1074,7 @@ function consume(compiler, expected, errorMessage) {
 }
 
 // Matches one or more newlines. Returns true if at least one was found.
-function matchLine(compiler)
-{
+function matchLine(compiler) {
   if (!match(compiler, TokenType.TOKEN_LINE)) {
     return false;
   }
@@ -1093,7 +1091,7 @@ function ignoreNewlines(compiler) {
 // Consumes the current token. Emits an error if it is not a newline. Then
 // discards any duplicate newlines following it.
 function consumeLine(compiler, errorMessage) {
-  consume(compiler, TOKEN_LINE, errorMessage);
+  consume(compiler, TokenType.TOKEN_LINE, errorMessage);
   ignoreNewlines(compiler);
 }
 
@@ -1172,9 +1170,9 @@ function addLocal(compiler, name, length) {
 
 // Declares a variable in the current scope whose name is the given token.
 //
-// If [token] is `NULL`, uses the previously consumed token. Returns its symbol.
+// If [token] is `null`, uses the previously consumed token. Returns its symbol.
 function declareVariable(compiler, token) {
-  if (token === NULL) {
+  if (token === null) {
     token = compiler.parser.previous;
   }
 
@@ -1189,9 +1187,9 @@ function declareVariable(compiler, token) {
                                     compiler.parser.module,
                                     token.start, token.length, NULL_VAL);
 
-    if (symbol == -1) {
+    if (symbol === -1) {
       error(compiler, "Module variable is already defined.");
-    } else if (symbol == -2) {
+    } else if (symbol === -2) {
       error(compiler, "Too many module variables defined.");
     }
 
@@ -1206,7 +1204,7 @@ function declareVariable(compiler, token) {
     // Once we escape this scope and hit an outer one, we can stop.
     if (local.depth < compiler.scopeDepth) break;
 
-    if (local.length == token.length && local.name === token.start) {
+    if (local.length === token.length && local.name === token.start) {
       error(compiler, "Variable is already declared in this scope.");
       return i;
     }
@@ -1291,7 +1289,7 @@ function resolveLocal(compiler, name, length) {
   // Look it up in the local scopes. Look in reverse order so that the most
   // nested variable is found first and shadows outer ones.
   for (var i = compiler.numLocals - 1; i >= 0; i--) {
-    if (compiler.locals[i].length == length &&
+    if (compiler.locals[i].length === length &&
       name === compiler.locals[i].name) {
       return i;
     }
@@ -1341,7 +1339,7 @@ function findUpvalue(compiler, name, length) {
 
   // See if it's a local variable in the immediately enclosing function.
   var local = resolveLocal(compiler.parent, name, length);
-  if (local != -1) {
+  if (local !== -1) {
     // Mark the local as an upvalue so we know to close it when it goes out of
     // scope.
     compiler.parent.locals[local].isUpvalue = true;
@@ -1374,7 +1372,7 @@ function resolveNonmodule(compiler, name, length) {
   var variable;
   variable.scope = SCOPE_LOCAL;
   variable.index = resolveLocal(compiler, name, length);
-  if (variable.index != -1) return variable;
+  if (variable.index !== -1) return variable;
 
   // It's not a local, so guess that it's an upvalue.
   variable.scope = SCOPE_UPVALUE;
@@ -1387,7 +1385,7 @@ function resolveNonmodule(compiler, name, length) {
 // function's upvalue list. Returns a variable with index -1 if not found.
 function resolveName(compiler, name, length) {
   var variable = resolveNonmodule(compiler, name, length);
-  if (variable.index != -1) {
+  if (variable.index !== -1) {
     return variable;
   }
 
@@ -1463,7 +1461,7 @@ var Precedence = {
   PREC_CONDITIONAL: 3,    // ?:
   PREC_LOGICAL_OR: 4,     // ||
   PREC_LOGICAL_AND: 5,    // &&
-  PREC_EQUALITY: 6,       // == !=
+  PREC_EQUALITY: 6,       // === !=
   PREC_IS: 7,             // is
   PREC_COMPARISON: 8,     // < > <= >=
   PREC_BITWISE_OR: 9,     // |
@@ -1479,11 +1477,11 @@ var Precedence = {
 };
 
 var GrammarRule = {
-  prefix: undefined,
-  infix: undefined,
-  method: undefined,
-  precedence: undefined,
-  name: undefined
+  prefix: null,
+  infix: null,
+  method: null,
+  precedence: null,
+  name: null
 };
 
 // Forward declarations since the grammar is recursive.
@@ -1615,30 +1613,30 @@ function signatureToString(signature, name, length) {
   length += signature.length;
 
   switch (signature.type) {
-    case SIG_METHOD:
+    case SignatureType.SIG_METHOD:
       signatureParameterList(name, length, signature.arity, '(', ')');
       break;
 
-    case SIG_GETTER:
+    case SignatureType.SIG_GETTER:
       // The signature is just the name.
       break;
 
-    case SIG_SETTER:
+    case SignatureType.SIG_SETTER:
       name[(length)++] = '=';
       signatureParameterList(name, length, 1, '(', ')');
       break;
 
-    case SIG_SUBSCRIPT:
+    case SignatureType.SIG_SUBSCRIPT:
       signatureParameterList(name, length, signature.arity, '[', ']');
       break;
 
-    case SIG_SUBSCRIPT_SETTER:
+    case SignatureType.SIG_SUBSCRIPT_SETTER:
       signatureParameterList(name, length, signature.arity - 1, '[', ']');
       name[(length)++] = '=';
       signatureParameterList(name, length, 1, '(', ')');
       break;
 
-    case SIG_INITIALIZER:
+    case SignatureType.SIG_INITIALIZER:
       memcpy(name, "init ", 5);
       memcpy(name + 5, signature.name, signature.length);
       length = 5 + signature.length;
@@ -1704,7 +1702,7 @@ function callSignature(compiler, instruction, signature) {
     //
     // We bind it at class definition time by storing a reference to the
     // superclass in a constant. So, here, we create a slot in the constant
-    // table and store NULL in it. When the method is bound, we'll look up the
+    // table and store null in it. When the method is bound, we'll look up the
     // superclass then and store it in the constant slot.
     emitShort(compiler, addConstant(compiler, NULL_VAL));
   }
@@ -1724,16 +1722,16 @@ function methodCall(compiler, instruction, signature) {
   var called = {
     name: signature.name,
     length: signature.length,
-    type: SIG_GETTER,
+    type: SignatureType.SIG_GETTER,
     arity: 0
   };
 
   // Parse the argument list, if any.
-  if (match(compiler, TOKEN_LEFT_PAREN)) {
-    called.type = SIG_METHOD;
+  if (match(compiler, TokenType.TOKEN_LEFT_PAREN)) {
+    called.type = SignatureType.SIG_METHOD;
 
     // Allow empty an argument list.
-    if (peek(compiler) != TokenType.TOKEN_RIGHT_PAREN) {
+    if (peek(compiler) !== TokenType.TOKEN_RIGHT_PAREN) {
       finishArgumentList(compiler, called);
     }
     consume(compiler, TokenType.TOKEN_RIGHT_PAREN, "Expect ')' after arguments.");
@@ -1742,7 +1740,7 @@ function methodCall(compiler, instruction, signature) {
   // Parse the block argument, if any.
   if (match(compiler, TokenType.TOKEN_LEFT_BRACE)) {
     // Include the block argument in the arity.
-    called.type = SIG_METHOD;
+    called.type = SignatureType.SIG_METHOD;
     called.arity++;
 
     var fnCompiler;
@@ -1752,7 +1750,7 @@ function methodCall(compiler, instruction, signature) {
     var fnSignature = {
       name: "",
       length: 0,
-      type: SIG_METHOD,
+      type: SignatureType.SIG_METHOD,
       arity: 0
     };
 
@@ -1779,12 +1777,12 @@ function methodCall(compiler, instruction, signature) {
 
   // If this is a super() call for an initializer, make sure we got an actual
   // argument list.
-  if (signature.type == SIG_INITIALIZER) {
-    if (called.type != SIG_METHOD) {
+  if (signature.type === SignatureType.SIG_INITIALIZER) {
+    if (called.type !== SignatureType.SIG_METHOD) {
       error(compiler, "A superclass constructor must have an argument list.");
     }
 
-    called.type = SIG_INITIALIZER;
+    called.type = SignatureType.SIG_INITIALIZER;
   }
 
   callSignature(compiler, instruction, called);
@@ -1794,21 +1792,890 @@ function methodCall(compiler, instruction, signature) {
 // getters, method calls with arguments, and setter calls.
 function namedCall(compiler, canAssign, instruction) {
   // Get the token for the method name.
-  var signature = signatureFromToken(compiler, SIG_GETTER);
+  var signature = signatureFromToken(compiler, SignatureType.SIG_GETTER);
 
   if (canAssign && match(compiler, TokenType.TOKEN_EQ)) {
     ignoreNewlines(compiler);
 
     // Build the setter signature.
-    signature.type = SIG_SETTER;
+    signature.type = SignatureType.SIG_SETTER;
     signature.arity = 1;
 
     // Compile the assigned value.
     expression(compiler);
     callSignature(compiler, instruction, signature);
-  }
-  else
-  {
+  } else {
     methodCall(compiler, instruction, signature);
+  }
+}
+
+// Emits the code to load [variable] onto the stack.
+function loadVariable(compiler, variable) {
+  switch (variable.scope) {
+    case SCOPE_LOCAL:
+      loadLocal(compiler, variable.index);
+      break;
+    case SCOPE_UPVALUE:
+      emitByteArg(compiler, CODE_LOAD_UPVALUE, variable.index);
+      break;
+    case SCOPE_MODULE:
+      emitShortArg(compiler, CODE_LOAD_MODULE_VAR, variable.index);
+      break;
+    default:
+      UNREACHABLE();
+  }
+}
+
+// Loads the receiver of the currently enclosing method. Correctly handles
+// functions defined inside methods.
+function loadThis(compiler) {
+  loadVariable(compiler, resolveNonmodule(compiler, "this", 4));
+}
+
+// Pushes the value for a module-level variable implicitly imported from core.
+function loadCoreVariable(compiler, name) {
+  var symbol = wrenSymbolTableFind(compiler.parser.module.variableNames,
+                                   name, strlen(name));
+  assert(symbol !== -1, "Should have already defined core name.");
+  emitShortArg(compiler, CODE_LOAD_MODULE_VAR, symbol);
+}
+
+// A parenthesized expression.
+function grouping(compiler, canAssign) {
+  expression(compiler);
+  consume(compiler, TokenType.TOKEN_RIGHT_PAREN, "Expect ')' after expression.");
+}
+
+// A list literal.
+function list(compiler, canAssign) {
+  // Instantiate a new list.
+  loadCoreVariable(compiler, "List");
+  callMethod(compiler, 0, "new()", 5);
+
+  // Compile the list elements. Each one compiles to a ".add()" call.
+  do
+  {
+    ignoreNewlines(compiler);
+
+    // Stop if we hit the end of the list.
+    if (peek(compiler) === TokenType.TOKEN_RIGHT_BRACKET) break;
+
+    // The element.
+    expression(compiler);
+    callMethod(compiler, 1, "addCore_(_)", 11);
+  } while (match(compiler, TokenType.TOKEN_COMMA));
+
+  // Allow newlines before the closing ']'.
+  ignoreNewlines(compiler);
+  consume(compiler, TokenType.TOKEN_RIGHT_BRACKET, "Expect ']' after list elements.");
+}
+
+// A map literal.
+function map(compiler, canAssign) {
+  // Instantiate a new map.
+  loadCoreVariable(compiler, "Map");
+  callMethod(compiler, 0, "new()", 5);
+
+  // Compile the map elements. Each one is compiled to just invoke the
+  // subscript setter on the map.
+  do {
+    ignoreNewlines(compiler);
+
+    // Stop if we hit the end of the map.
+    if (peek(compiler) === TokenType.TOKEN_RIGHT_BRACE) {
+      break;
+    }
+
+    // The key.
+    parsePrecedence(compiler, Precedence.PREC_UNARY);
+    consume(compiler, TokenType.TOKEN_COLON, "Expect ':' after map key.");
+    ignoreNewlines(compiler);
+
+    // The value.
+    expression(compiler);
+    callMethod(compiler, 2, "addCore_(_,_)", 13);
+  } while (match(compiler, TokenType.TOKEN_COMMA));
+
+  // Allow newlines before the closing '}'.
+  ignoreNewlines(compiler);
+  consume(compiler, TokenType.TOKEN_RIGHT_BRACE, "Expect '}' after map entries.");
+}
+
+// Unary operators like `-foo`.
+function unaryOp(compiler, canAssign) {
+  var rule = getRule(compiler.parser.previous.type);
+
+  ignoreNewlines(compiler);
+
+  // Compile the argument.
+  parsePrecedence(compiler, Precedence.PREC_UNARY + 1);
+
+  // Call the operator method on the left-hand side.
+  callMethod(compiler, 0, rule.name, 1);
+}
+
+function boolean(compiler, canAssign) {
+  emitOp(compiler,
+      compiler.parser.previous.type === TokenType.TOKEN_FALSE ? CODE_FALSE : CODE_TRUE);
+}
+
+// Walks the compiler chain to find the compiler for the nearest class
+// enclosing this one. Returns null if not currently inside a class definition.
+function getEnclosingClassCompiler(compiler) {
+  while (compiler !== null) {
+    if (compiler.enclosingClass !== null) {
+      return compiler;
+    }
+    compiler = compiler.parent;
+  }
+
+  return null;
+}
+
+// Walks the compiler chain to find the nearest class enclosing this one.
+// Returns null if not currently inside a class definition.
+function getEnclosingClass(compiler) {
+  compiler = getEnclosingClassCompiler(compiler);
+  return compiler === null ? null : compiler.enclosingClass;
+}
+
+function field(compiler, canAssign) {
+  // Initialize it with a fake value so we can keep parsing and minimize the
+  // number of cascaded errors.
+  var field = 255;
+
+  var enclosingClass = getEnclosingClass(compiler);
+
+  if (enclosingClass === null) {
+    error(compiler, "Cannot reference a field outside of a class definition.");
+  } else if (enclosingClass.isForeign) {
+    error(compiler, "Cannot define fields in a foreign class.");
+  } else if (enclosingClass.inStatic) {
+    error(compiler, "Cannot use an instance field in a static method.");
+  } else {
+    // Look up the field, or implicitly define it.
+    field = wrenSymbolTableEnsure(compiler.parser.vm, enclosingClass.fields,
+        compiler.parser.previous.start,
+        compiler.parser.previous.length);
+
+    if (field >= MAX_FIELDS) {
+      error(compiler, "A class can only have %x fields.", MAX_FIELDS);
+    }
+  }
+
+  // If there's an "=" after a field name, it's an assignment.
+  var isLoad = true;
+  if (canAssign && match(compiler, TokenType.TOKEN_EQ)) {
+    // Compile the right-hand side.
+    expression(compiler);
+    isLoad = false;
+  }
+
+  // If we're directly inside a method, use a more optimal instruction.
+  if (compiler.parent !== null &&
+      compiler.parent.enclosingClass === enclosingClass) {
+    emitByteArg(compiler, isLoad ? CODE_LOAD_FIELD_THIS : CODE_STORE_FIELD_THIS,
+                field);
+  } else {
+    loadThis(compiler);
+    emitByteArg(compiler, isLoad ? CODE_LOAD_FIELD : CODE_STORE_FIELD, field);
+  }
+}
+
+// Compiles a read or assignment to [variable].
+function bareName(compiler, canAssign, variable) {
+  // If there's an "=" after a bare name, it's a variable assignment.
+  if (canAssign && match(compiler, TokenType.TOKEN_EQ)) {
+    // Compile the right-hand side.
+    expression(compiler);
+
+    // Emit the store instruction.
+    switch (variable.scope) {
+      case SCOPE_LOCAL:
+        emitByteArg(compiler, CODE_STORE_LOCAL, variable.index);
+        break;
+      case SCOPE_UPVALUE:
+        emitByteArg(compiler, CODE_STORE_UPVALUE, variable.index);
+        break;
+      case SCOPE_MODULE:
+        emitShortArg(compiler, CODE_STORE_MODULE_VAR, variable.index);
+        break;
+      default:
+        UNREACHABLE();
+    }
+    return;
+  }
+
+  // Emit the load instruction.
+  loadVariable(compiler, variable);
+}
+
+function staticField(compiler, canAssign) {
+  var classCompiler = getEnclosingClassCompiler(compiler);
+  if (classCompiler === null) {
+    error(compiler, "Cannot use a static field outside of a class definition.");
+    return;
+  }
+
+  // Look up the name in the scope chain.
+  var token = compiler.parser.previous;
+
+  // If this is the first time we've seen this static field, implicitly
+  // define it as a variable in the scope surrounding the class definition.
+  if (resolveLocal(classCompiler, token.start, token.length) === -1) {
+    var symbol = declareVariable(classCompiler, null);
+
+    // Implicitly initialize it to null.
+    emitOp(classCompiler, CODE_NULL);
+    defineVariable(classCompiler, symbol);
+  }
+
+  // It definitely exists now, so resolve it properly. This is different from
+  // the above resolveLocal() call because we may have already closed over it
+  // as an upvalue.
+  var variable = resolveName(compiler, token.start, token.length);
+  bareName(compiler, canAssign, variable);
+}
+
+// Returns `true` if [name] is a local variable name (starts with a lowercase
+// letter).
+function isLocalName(name) {
+  return name[0] >= 'a' && name[0] <= 'z';
+}
+
+// Compiles a variable name or method call with an implicit receiver.
+function name(compiler, canAssign) {
+  // Look for the name in the scope chain up to the nearest enclosing method.
+  var token = compiler.parser.previous;
+
+  var variable = resolveNonmodule(compiler, token.start, token.length);
+  if (variable.index !== -1) {
+    bareName(compiler, canAssign, variable);
+    return;
+  }
+
+  // TODO: The fact that we return above here if the variable is known and parse
+  // an optional argument list below if not means that the grammar is not
+  // context-free. A line of code in a method like "someName(foo)" is a parse
+  // error if "someName" is a defined variable in the surrounding scope and not
+  // if it isn't. Fix this. One option is to have "someName(foo)" always
+  // resolve to a self-call if there is an argument list, but that makes
+  // getters a little confusing.
+
+  // If we're inside a method and the name is lowercase, treat it as a method
+  // on this.
+  if (isLocalName(token.start) && getEnclosingClass(compiler) !== null) {
+    loadThis(compiler);
+    namedCall(compiler, canAssign, CODE_CALL_0);
+    return;
+  }
+
+  // Otherwise, look for a module-level variable with the name.
+  variable.scope = SCOPE_MODULE;
+  variable.index = wrenSymbolTableFind(compiler.parser.module.variableNames,
+                                       token.start, token.length);
+  if (variable.index === -1)
+  {
+    if (isLocalName(token.start))
+    {
+      error(compiler, "null variable.");
+      return;
+    }
+
+    // If it's a nonlocal name, implicitly define a module-level variable in
+    // the hopes that we get a real definition later.
+    variable.index = wrenDeclareVariable(compiler.parser.vm,
+                                         compiler.parser.module,
+                                         token.start, token.length);
+
+    if (variable.index === -2) {
+      error(compiler, "Too many module variables defined.");
+    }
+  }
+
+  bareName(compiler, canAssign, variable);
+}
+
+function null_(compiler, canAssign) {
+  emitOp(compiler, CODE_NULL);
+}
+
+// A number or string literal.
+function literal(compiler, canAssign) {
+  emitConstant(compiler, compiler.parser.previous.value);
+}
+
+// A string literal that contains interpolated expressions.
+//
+// Interpolation is syntactic sugar for calling ".join()" on a list. So the
+// string:
+//
+//     "a %(b + c) d"
+//
+// is compiled roughly like:
+//
+//     ["a ", b + c, " d"].join()
+function stringInterpolation(compiler, canAssign) {
+  // Instantiate a new list.
+  loadCoreVariable(compiler, "List");
+  callMethod(compiler, 0, "new()", 5);
+
+  do {
+    // The opening string part.
+    literal(compiler, false);
+    callMethod(compiler, 1, "addCore_(_)", 11);
+
+    // The interpolated expression.
+    ignoreNewlines(compiler);
+    expression(compiler);
+    callMethod(compiler, 1, "addCore_(_)", 11);
+
+    ignoreNewlines(compiler);
+  } while (match(compiler, TokenType.TOKEN_INTERPOLATION));
+
+  // The trailing string part.
+  consume(compiler, TokenType.TOKEN_STRING, "Expect end of string interpolation.");
+  literal(compiler, false);
+  callMethod(compiler, 1, "addCore_(_)", 11);
+
+  // The list of interpolated parts.
+  callMethod(compiler, 0, "join()", 6);
+}
+
+function super_(compiler, canAssign) {
+  var enclosingClass = getEnclosingClass(compiler);
+
+  if (enclosingClass === null) {
+    error(compiler, "Cannot use 'super' outside of a method.");
+  }
+
+  loadThis(compiler);
+
+  // TODO: Super operator calls.
+  // TODO: There's no syntax for invoking a superclass constructor with a
+  // different name from the enclosing one. Figure that out.
+
+  // See if it's a named super call, or an unnamed one.
+  if (match(compiler, TokenType.TOKEN_DOT)) {
+    // Compile the superclass call.
+    consume(compiler, TokenType.TOKEN_NAME, "Expect method name after 'super.'.");
+    namedCall(compiler, canAssign, CODE_SUPER_0);
+  } else if (enclosingClass !== null) {
+    // No explicit name, so use the name of the enclosing method. Make sure we
+    // check that enclosingClass isn't null first. We've already reported the
+    // error, but we don't want to crash here.
+    methodCall(compiler, CODE_SUPER_0, enclosingClass.signature);
+  }
+}
+
+function this_(compiler, canAssign) {
+  if (getEnclosingClass(compiler) === null) {
+    error(compiler, "Cannot use 'this' outside of a method.");
+    return;
+  }
+
+  loadThis(compiler);
+}
+
+// Subscript or "array indexing" operator like `foo[bar]`.
+function subscript(compiler, canAssign) {
+  var signature = {
+    name: "",
+    length: 0,
+    type: SignatureType.SIG_SUBSCRIPT,
+    arity: 0
+  };
+
+  // Parse the argument list.
+  finishArgumentList(compiler, signature);
+  consume(compiler, TokenType.TOKEN_RIGHT_BRACKET, "Expect ']' after arguments.");
+
+  if (canAssign && match(compiler, TokenType.TOKEN_EQ)) {
+    signature.type = SignatureType.SIG_SUBSCRIPT_SETTER;
+
+    // Compile the assigned value.
+    validateNumParameters(compiler, ++signature.arity);
+    expression(compiler);
+  }
+
+  callSignature(compiler, CODE_CALL_0, signature);
+}
+
+function call(compiler, canAssign) {
+  ignoreNewlines(compiler);
+  consume(compiler, TokenType.TOKEN_NAME, "Expect method name after '.'.");
+  namedCall(compiler, canAssign, CODE_CALL_0);
+}
+
+function and_(compiler, canAssign) {
+  ignoreNewlines(compiler);
+
+  // Skip the right argument if the left is false.
+  var jump = emitJump(compiler, CODE_AND);
+  parsePrecedence(compiler, Precedence.PREC_LOGICAL_AND);
+  patchJump(compiler, jump);
+}
+
+function or_(compiler, canAssign) {
+  ignoreNewlines(compiler);
+
+  // Skip the right argument if the left is true.
+  var jump = emitJump(compiler, CODE_OR);
+  parsePrecedence(compiler, Precedence.PREC_LOGICAL_OR);
+  patchJump(compiler, jump);
+}
+
+function conditional(compiler, canAssign) {
+  // Ignore newline after '?'.
+  ignoreNewlines(compiler);
+
+  // Jump to the else branch if the condition is false.
+  var ifJump = emitJump(compiler, CODE_JUMP_IF);
+
+  // Compile the then branch.
+  parsePrecedence(compiler, Precedence.PREC_CONDITIONAL);
+
+  consume(compiler, TokenType.TOKEN_COLON,
+          "Expect ':' after then branch of conditional operator.");
+  ignoreNewlines(compiler);
+
+  // Jump over the else branch when the if branch is taken.
+  var elseJump = emitJump(compiler, CODE_JUMP);
+
+  // Compile the else branch.
+  patchJump(compiler, ifJump);
+
+  parsePrecedence(compiler, Precedence.PREC_ASSIGNMENT);
+
+  // Patch the jump over the else.
+  patchJump(compiler, elseJump);
+}
+
+function infixOp(compiler, canAssign) {
+  var rule = getRule(compiler.parser.previous.type);
+
+  // An infix operator cannot end an expression.
+  ignoreNewlines(compiler);
+
+  // Compile the right-hand side.
+  parsePrecedence(compiler, (Precedence)(rule.precedence + 1));
+
+  // Call the operator method on the left-hand side.
+  var signature = {
+    name: rule.name,
+    length: strlen(rule.name),
+    type: SignatureType.SIG_METHOD,
+    arity: 1
+  };
+  callSignature(compiler, CODE_CALL_0, signature);
+}
+
+// Compiles a method signature for an infix operator.
+function infixSignature(compiler, signature) {
+  // Add the RHS parameter.
+  signature.type = SignatureType.SIG_METHOD;
+  signature.arity = 1;
+
+  // Parse the parameter name.
+  consume(compiler, TokenType.TOKEN_LEFT_PAREN, "Expect '(' after operator name.");
+  declareNamedVariable(compiler);
+  consume(compiler, TokenType.TOKEN_RIGHT_PAREN, "Expect ')' after parameter name.");
+}
+
+// Compiles a method signature for an unary operator (i.e. "!").
+function unarySignature(compiler, signature) {
+  // Do nothing. The name is already complete.
+  signature.type = SignatureType.SIG_GETTER;
+}
+
+// Compiles a method signature for an operator that can either be unary or
+// infix (i.e. "-").
+function mixedSignature(compiler, signature) {
+  signature.type = SignatureType.SIG_GETTER;
+
+  // If there is a parameter, it's an infix operator, otherwise it's unary.
+  if (match(compiler, TokenType.TOKEN_LEFT_PAREN)) {
+    // Add the RHS parameter.
+    signature.type = SignatureType.SIG_METHOD;
+    signature.arity = 1;
+
+    // Parse the parameter name.
+    declareNamedVariable(compiler);
+    consume(compiler, TokenType.TOKEN_RIGHT_PAREN, "Expect ')' after parameter name.");
+  }
+}
+
+// Compiles an optional setter parameter in a method [signature].
+//
+// Returns `true` if it was a setter.
+function maybeSetter(compiler, signature) {
+  // See if it's a setter.
+  if (!match(compiler, TokenType.TOKEN_EQ)) {
+    return false;
+  }
+
+  // It's a setter.
+  if (signature.type === SignatureType.SIG_SUBSCRIPT) {
+    signature.type = SignatureType.SIG_SUBSCRIPT_SETTER;
+  } else {
+    signature.type = SignatureType.SIG_SETTER;
+  }
+
+  // Parse the value parameter.
+  consume(compiler, TokenType.TOKEN_LEFT_PAREN, "Expect '(' after '='.");
+  declareNamedVariable(compiler);
+  consume(compiler, TokenType.TOKEN_RIGHT_PAREN, "Expect ')' after parameter name.");
+
+  signature.arity++;
+
+  return true;
+}
+
+// Compiles a method signature for a subscript operator.
+function subscriptSignature(compiler, signature) {
+  signature.type = SignatureType.SIG_SUBSCRIPT;
+
+  // The signature currently has "[" as its name since that was the token that
+  // matched it. Clear that out.
+  signature.length = 0;
+
+  // Parse the parameters inside the subscript.
+  finishParameterList(compiler, signature);
+  consume(compiler, TokenType.TOKEN_RIGHT_BRACKET, "Expect ']' after parameters.");
+
+  maybeSetter(compiler, signature);
+}
+
+// Parses an optional parenthesized parameter list. Updates `type` and `arity`
+// in [signature] to match what was parsed.
+function parameterList(compiler, signature) {
+  // The parameter list is optional.
+  if (!match(compiler, TokenType.TOKEN_LEFT_PAREN)) {
+    return;
+  }
+
+  signature.type = SignatureType.SIG_METHOD;
+
+  // Allow an empty parameter list.
+  if (match(compiler, TokenType.TOKEN_RIGHT_PAREN)) {
+    return;
+  }
+
+  finishParameterList(compiler, signature);
+  consume(compiler, TokenType.TOKEN_RIGHT_PAREN, "Expect ')' after parameters.");
+}
+
+// Compiles a method signature for a named method or setter.
+function namedSignature(compiler, signature) {
+  signature.type = SignatureType.SIG_GETTER;
+
+  // If it's a setter, it can't also have a parameter list.
+  if (maybeSetter(compiler, signature)) {
+    return;
+  }
+
+  // Regular named method with an optional parameter list.
+  parameterList(compiler, signature);
+}
+
+// Compiles a method signature for a constructor.
+function constructorSignature(compiler, signature) {
+  consume(compiler, TokenType.TOKEN_NAME, "Expect constructor name after 'construct'.");
+
+  // Capture the name.
+  signature = signatureFromToken(compiler, SignatureType.SIG_INITIALIZER);
+
+  if (match(compiler, TokenType.TOKEN_EQ)) {
+    error(compiler, "A constructor cannot be a setter.");
+  }
+
+  if (!match(compiler, TokenType.TOKEN_LEFT_PAREN)) {
+    error(compiler, "A constructor cannot be a getter.");
+    return;
+  }
+
+  // Allow an empty parameter list.
+  if (match(compiler, TokenType.TOKEN_RIGHT_PAREN)) {
+    return;
+  }
+
+  finishParameterList(compiler, signature);
+  consume(compiler, TokenType.TOKEN_RIGHT_PAREN, "Expect ')' after parameters.");
+}
+
+// This table defines all of the parsing rules for the prefix and infix
+// expressions in the grammar. Expressions are parsed using a Pratt parser.
+//
+// See: http://journal.stuffwithstuff.com/2011/03/19/pratt-parsers-expression-parsing-made-easy/
+function UNUSED() {
+  return {
+    prefix: null,
+    infix: null,
+    method: null,
+    precedence: Precedence.PREC_NONE,
+    name: null
+  };
+}
+function PREFIX(fn) {
+  return {
+    prefix: fn,
+    infix: null,
+    method: null,
+    precedence: Precedence.PREC_NONE,
+    name: null
+  };
+}
+function INFIX(prec, fn) {
+  return {
+    prefix: null,
+    infix: fn,
+    method: null,
+    precedence: prec,
+    name: null
+  };
+}
+function INFIX_OPERATOR(prec, name) {
+  return {
+    prefix: null,
+    infix: infixOp,
+    method: infixSignature,
+    precedence: prec,
+    name: name
+  };
+}
+function PREFIX_OPERATOR(name) {
+  return {
+    prefix: unaryOp,
+    infix: null,
+    method: unarySignature,
+    precedence: Precedence.PREC_NONE,
+    name: name
+  };
+}
+function OPERATOR(name) {
+  return {
+    prefix: unaryOp,
+    infix: infixOp,
+    method: mixedSignature,
+    precedence: Precedence.PREC_TERM,
+    name: name
+  };
+}
+
+var rules = [
+  /* TOKEN_LEFT_PAREN    */ PREFIX(grouping),
+  /* TOKEN_RIGHT_PAREN   */ UNUSED(),
+  /* TOKEN_LEFT_BRACKET  */ { prefix: list,
+                              infix: subscript,
+                              method: subscriptSignature,
+                              precedence: Precedence.PREC_CALL,
+                              name: null
+                            },
+  /* TOKEN_RIGHT_BRACKET */ UNUSED(),
+  /* TOKEN_LEFT_BRACE    */ PREFIX(map),
+  /* TOKEN_RIGHT_BRACE   */ UNUSED(),
+  /* TOKEN_COLON         */ UNUSED(),
+  /* TOKEN_DOT           */ INFIX(Precedence.PREC_CALL, call),
+  /* TOKEN_DOTDOT        */ INFIX_OPERATOR(Precedence.PREC_RANGE, ".."),
+  /* TOKEN_DOTDOTDOT     */ INFIX_OPERATOR(Precedence.PREC_RANGE, "..."),
+  /* TOKEN_COMMA         */ UNUSED(),
+  /* TOKEN_STAR          */ INFIX_OPERATOR(Precedence.PREC_FACTOR, "*"),
+  /* TOKEN_SLASH         */ INFIX_OPERATOR(Precedence.PREC_FACTOR, "/"),
+  /* TOKEN_PERCENT       */ INFIX_OPERATOR(Precedence.PREC_FACTOR, "%"),
+  /* TOKEN_PLUS          */ INFIX_OPERATOR(Precedence.PREC_TERM, "+"),
+  /* TOKEN_MINUS         */ OPERATOR("-"),
+  /* TOKEN_LTLT          */ INFIX_OPERATOR(Precedence.PREC_BITWISE_SHIFT, "<<"),
+  /* TOKEN_GTGT          */ INFIX_OPERATOR(Precedence.PREC_BITWISE_SHIFT, ">>"),
+  /* TOKEN_PIPE          */ INFIX_OPERATOR(Precedence.PREC_BITWISE_OR, "|"),
+  /* TOKEN_PIPEPIPE      */ INFIX(Precedence.PREC_LOGICAL_OR, or_),
+  /* TOKEN_CARET         */ INFIX_OPERATOR(Precedence.PREC_BITWISE_XOR, "^"),
+  /* TOKEN_AMP           */ INFIX_OPERATOR(Precedence.PREC_BITWISE_AND, "&"),
+  /* TOKEN_AMPAMP        */ INFIX(Precedence.PREC_LOGICAL_AND, and_),
+  /* TOKEN_BANG          */ PREFIX_OPERATOR("!"),
+  /* TOKEN_TILDE         */ PREFIX_OPERATOR("~"),
+  /* TOKEN_QUESTION      */ INFIX(Precedence.PREC_ASSIGNMENT, conditional),
+  /* TOKEN_EQ            */ UNUSED(),
+  /* TOKEN_LT            */ INFIX_OPERATOR(Precedence.PREC_COMPARISON, "<"),
+  /* TOKEN_GT            */ INFIX_OPERATOR(Precedence.PREC_COMPARISON, ">"),
+  /* TOKEN_LTEQ          */ INFIX_OPERATOR(Precedence.PREC_COMPARISON, "<="),
+  /* TOKEN_GTEQ          */ INFIX_OPERATOR(Precedence.PREC_COMPARISON, ">="),
+  /* TOKEN_EQEQ          */ INFIX_OPERATOR(Precedence.PREC_EQUALITY, "=="),
+  /* TOKEN_BANGEQ        */ INFIX_OPERATOR(Precedence.PREC_EQUALITY, "!="),
+  /* TOKEN_BREAK         */ UNUSED(),
+  /* TOKEN_CLASS         */ UNUSED(),
+  /* TOKEN_CONSTRUCT     */ { prefix: null,
+                              infix: null,
+                              method: constructorSignature,
+                              precendence: Precedence.PREC_NONE,
+                              name: null
+                            },
+  /* TOKEN_ELSE          */ UNUSED(),
+  /* TOKEN_FALSE         */ PREFIX(boolean),
+  /* TOKEN_FOR           */ UNUSED(),
+  /* TOKEN_FOREIGN       */ UNUSED(),
+  /* TOKEN_IF            */ UNUSED(),
+  /* TOKEN_IMPORT        */ UNUSED(),
+  /* TOKEN_IN            */ UNUSED(),
+  /* TOKEN_IS            */ INFIX_OPERATOR(PREC_IS, "is"),
+  /* TOKEN_NULL          */ PREFIX(null_),
+  /* TOKEN_RETURN        */ UNUSED(),
+  /* TOKEN_STATIC        */ UNUSED(),
+  /* TOKEN_SUPER         */ PREFIX(super_),
+  /* TOKEN_THIS          */ PREFIX(this_),
+  /* TOKEN_TRUE          */ PREFIX(boolean),
+  /* TOKEN_VAR           */ UNUSED(),
+  /* TOKEN_WHILE         */ UNUSED(),
+  /* TOKEN_FIELD         */ PREFIX(field),
+  /* TOKEN_STATIC_FIELD  */ PREFIX(staticField),
+  /* TOKEN_NAME          */ { prefix: name,
+                              infix: null,
+                              method: namedSignature,
+                              precedence: Precedence.PREC_NONE,
+                              name: null
+                            },
+  /* TOKEN_NUMBER        */ PREFIX(literal),
+  /* TOKEN_STRING        */ PREFIX(literal),
+  /* TOKEN_INTERPOLATION */ PREFIX(stringInterpolation),
+  /* TOKEN_LINE          */ UNUSED(),
+  /* TOKEN_ERROR         */ UNUSED(),
+  /* TOKEN_EOF           */ UNUSED()
+];
+
+// Gets the [GrammarRule] associated with tokens of [type].
+function getRule(type)
+{
+  return rules[type];
+}
+
+// The main entrypoint for the top-down operator precedence parser.
+function parsePrecedence(compiler, precedence) {
+  nextToken(compiler.parser);
+  var prefix = rules[compiler.parser.previous.type].prefix;
+
+  if (prefix === null) {
+    error(compiler, "Expected expression.");
+    return;
+  }
+
+  // Track if the precendence of the surrounding expression is low enough to
+  // allow an assignment inside this one. We can't compile an assignment like
+  // a normal expression because it requires us to handle the LHS specially --
+  // it needs to be an lvalue, not an rvalue. So, for each of the kinds of
+  // expressions that are valid lvalues -- names, subscripts, fields, etc. --
+  // we pass in whether or not it appears in a context loose enough to allow
+  // "=". If so, it will parse the "=" itself and handle it appropriately.
+  var canAssign = precedence <= Precedence.PREC_CONDITIONAL;
+  prefix(compiler, canAssign);
+
+  while (precedence <= rules[compiler.parser.current.type].precedence) {
+    nextToken(compiler.parser);
+    var infix = rules[compiler.parser.previous.type].infix;
+    infix(compiler, canAssign);
+  }
+}
+
+// Parses an expression. Unlike statements, expressions leave a resulting value
+// on the stack.
+function expression(compiler) {
+  parsePrecedence(compiler, Precedence.PREC_LOWEST);
+}
+
+// Returns the number of arguments to the instruction at [ip] in [fn]'s
+// bytecode.
+function getNumArguments(bytecode, constants, ip) {
+  var instruction = bytecode[ip];
+  switch (instruction) {
+    case CODE_NULL:
+    case CODE_FALSE:
+    case CODE_TRUE:
+    case CODE_POP:
+    case CODE_DUP:
+    case CODE_CLOSE_UPVALUE:
+    case CODE_RETURN:
+    case CODE_END:
+    case CODE_LOAD_LOCAL_0:
+    case CODE_LOAD_LOCAL_1:
+    case CODE_LOAD_LOCAL_2:
+    case CODE_LOAD_LOCAL_3:
+    case CODE_LOAD_LOCAL_4:
+    case CODE_LOAD_LOCAL_5:
+    case CODE_LOAD_LOCAL_6:
+    case CODE_LOAD_LOCAL_7:
+    case CODE_LOAD_LOCAL_8:
+    case CODE_CONSTRUCT:
+    case CODE_FOREIGN_CONSTRUCT:
+    case CODE_FOREIGN_CLASS:
+      return 0;
+
+    case CODE_LOAD_LOCAL:
+    case CODE_STORE_LOCAL:
+    case CODE_LOAD_UPVALUE:
+    case CODE_STORE_UPVALUE:
+    case CODE_LOAD_FIELD_THIS:
+    case CODE_STORE_FIELD_THIS:
+    case CODE_LOAD_FIELD:
+    case CODE_STORE_FIELD:
+    case CODE_CLASS:
+      return 1;
+
+    case CODE_CONSTANT:
+    case CODE_LOAD_MODULE_VAR:
+    case CODE_STORE_MODULE_VAR:
+    case CODE_CALL_0:
+    case CODE_CALL_1:
+    case CODE_CALL_2:
+    case CODE_CALL_3:
+    case CODE_CALL_4:
+    case CODE_CALL_5:
+    case CODE_CALL_6:
+    case CODE_CALL_7:
+    case CODE_CALL_8:
+    case CODE_CALL_9:
+    case CODE_CALL_10:
+    case CODE_CALL_11:
+    case CODE_CALL_12:
+    case CODE_CALL_13:
+    case CODE_CALL_14:
+    case CODE_CALL_15:
+    case CODE_CALL_16:
+    case CODE_JUMP:
+    case CODE_LOOP:
+    case CODE_JUMP_IF:
+    case CODE_AND:
+    case CODE_OR:
+    case CODE_METHOD_INSTANCE:
+    case CODE_METHOD_STATIC:
+      return 2;
+
+    case CODE_SUPER_0:
+    case CODE_SUPER_1:
+    case CODE_SUPER_2:
+    case CODE_SUPER_3:
+    case CODE_SUPER_4:
+    case CODE_SUPER_5:
+    case CODE_SUPER_6:
+    case CODE_SUPER_7:
+    case CODE_SUPER_8:
+    case CODE_SUPER_9:
+    case CODE_SUPER_10:
+    case CODE_SUPER_11:
+    case CODE_SUPER_12:
+    case CODE_SUPER_13:
+    case CODE_SUPER_14:
+    case CODE_SUPER_15:
+    case CODE_SUPER_16:
+      return 4;
+
+    case CODE_CLOSURE: {
+      var constant = (bytecode[ip + 1] << 8) | bytecode[ip + 2];
+      var loadedFn = AS_FN(constants[constant]);
+
+      // There are two bytes for the constant, then two for each upvalue.
+      return 2 + (loadedFn.numUpvalues * 2);
+    }
+
+    default:
+      UNREACHABLE();
+      return 0;
   }
 }
