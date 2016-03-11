@@ -921,7 +921,7 @@ function nextToken(parser) {
             --parser.parens[parser.numParens - 1] === 0) {
           // This is the final ")", so the interpolation expression has ended.
           // This ")" now begins the next section of the template string.
-          parser->numParens--;
+          parser.numParens--;
           readString(parser);
           return;
         }
@@ -1042,4 +1042,609 @@ function nextToken(parser) {
   // If we get here, we're out of source, so just make EOF tokens.
   parser.tokenStart = parser.currentChar;
   makeToken(parser, TOKEN_EOF);
+}
+
+// Parsing ---------------------------------------------------------------------
+
+// Returns the type of the current token.
+function peek(compiler) {
+  return compiler.parser.current.type;
+}
+
+// Consumes the current token if its type is [expected]. Returns true if a
+// token was consumed.
+function match(compiler, expected) {
+  if (peek(compiler) !== expected) return false;
+
+  nextToken(compiler.parser);
+  return true;
+}
+
+// Consumes the current token. Emits an error if its type is not [expected].
+function consume(compiler, expected, errorMessage) {
+  nextToken(compiler.parser);
+  if (compiler.parser.previous.type !== expected) {
+    error(compiler, errorMessage);
+
+    // If the next token is the one we want, assume the current one is just a
+    // spurious error and discard it to minimize the number of cascaded errors.
+    if (compile.parser.current.type === expected) {
+      nextToken(compiler.parser);
+    }
+  }
+}
+
+// Matches one or more newlines. Returns true if at least one was found.
+function matchLine(compiler)
+{
+  if (!match(compiler, TokenType.TOKEN_LINE)) {
+    return false;
+  }
+
+  while (match(compiler, TokenType.TOKEN_LINE));
+  return true;
+}
+
+// Discards any newlines starting at the current token.
+function ignoreNewlines(compiler) {
+  matchLine(compiler);
+}
+
+// Consumes the current token. Emits an error if it is not a newline. Then
+// discards any duplicate newlines following it.
+function consumeLine(compiler, errorMessage) {
+  consume(compiler, TOKEN_LINE, errorMessage);
+  ignoreNewlines(compiler);
+}
+
+// Variables and scopes --------------------------------------------------------
+
+// Emits one single-byte argument. Returns its index.
+function emitByte(compiler, byte) {
+  wrenByteBufferWrite(compiler.parser.vm, compiler.fn.code, byte);
+
+  // Assume the instruction is associated with the most recently consumed token.
+  wrenIntBufferWrite(compiler.parser.vm, compiler.fn.debug.sourceLines,
+                     compiler.parser.previous.line);
+
+  return compiler.fn.code.count - 1;
+}
+
+// Emits one bytecode instruction.
+function emitOp(compiler, instruction) {
+  emitByte(compiler, instruction);
+
+  // Keep track of the stack's high water mark.
+  compiler.numSlots += stackEffects[instruction];
+  if (compiler.numSlots > compiler.fn.maxSlots) {
+    compiler.fn.maxSlots = compiler.numSlots;
+  }
+}
+
+// Emits one 16-bit argument, which will be written big endian.
+function emitShort(compiler, arg) {
+  emitByte(compiler, (arg >> 8) & 0xff);
+  emitByte(compiler, arg & 0xff);
+}
+
+// Emits one bytecode instruction followed by a 8-bit argument. Returns the
+// index of the argument in the bytecode.
+function emitByteArg(compiler, instruction, arg) {
+  emitOp(compiler, instruction);
+  return emitByte(compiler, arg);
+}
+
+// Emits one bytecode instruction followed by a 16-bit argument, which will be
+// written big endian.
+function emitShortArg(compiler, instruction, arg) {
+  emitOp(compiler, instruction);
+  emitShort(compiler, arg);
+}
+
+// Emits [instruction] followed by a placeholder for a jump offset. The
+// placeholder can be patched by calling [jumpPatch]. Returns the index of the
+// placeholder.
+function emitJump(compiler, instruction) {
+  emitOp(compiler, instruction);
+  emitByte(compiler, 0xff);
+  return emitByte(compiler, 0xff) - 1;
+}
+
+// Creates a new constant for the current value and emits the bytecode to load
+// it from the constant table.
+function emitConstant(compiler, value) {
+  var constant = addConstant(compiler, value);
+
+  // Compile the code to load the constant.
+  emitShortArg(compiler, CODE_CONSTANT, constant);
+}
+
+// Create a new local variable with [name]. Assumes the current scope is local
+// and the name is unique.
+function addLocal(compiler, name, length) {
+  var local = compiler.locals[compiler.numLocals];
+  local.name = name;
+  local.length = length;
+  local.depth = compiler.scopeDepth;
+  local.isUpvalue = false;
+  return compiler.numLocals++;
+}
+
+// Declares a variable in the current scope whose name is the given token.
+//
+// If [token] is `NULL`, uses the previously consumed token. Returns its symbol.
+function declareVariable(compiler, token) {
+  if (token === NULL) {
+    token = compiler.parser.previous;
+  }
+
+  if (token.length > MAX_VARIABLE_NAME) {
+    error(compiler, "Variable name cannot be longer than %x characters.",
+          MAX_VARIABLE_NAME);
+  }
+
+  // Top-level module scope.
+  if (compiler.scopeDepth === -1)   {
+    var symbol = wrenDefineVariable(compiler.parser.vm,
+                                    compiler.parser.module,
+                                    token.start, token.length, NULL_VAL);
+
+    if (symbol == -1) {
+      error(compiler, "Module variable is already defined.");
+    } else if (symbol == -2) {
+      error(compiler, "Too many module variables defined.");
+    }
+
+    return symbol;
+  }
+
+  // See if there is already a variable with this name declared in the current
+  // scope. (Outer scopes are OK: those get shadowed.)
+  for (var i = compiler.numLocals - 1; i >= 0; i--) {
+    var local = compiler.locals[i];
+
+    // Once we escape this scope and hit an outer one, we can stop.
+    if (local.depth < compiler.scopeDepth) break;
+
+    if (local.length == token.length && local.name === token.start) {
+      error(compiler, "Variable is already declared in this scope.");
+      return i;
+    }
+  }
+
+  if (compiler.numLocals === MAX_LOCALS) {
+    error(compiler, "Cannot declare more than %x variables in one scope.",
+          MAX_LOCALS);
+    return -1;
+  }
+
+  return addLocal(compiler, token.start, token.length);
+}
+
+// Parses a name token and declares a variable in the current scope with that
+// name. Returns its slot.
+function declareNamedVariable(compiler) {
+  consume(compiler, TokenType.TOKEN_NAME, "Expect variable name.");
+  return declareVariable(compiler, null);
+}
+
+// Stores a variable with the previously defined symbol in the current scope.
+function defineVariable(compiler, symbol) {
+  // Store the variable. If it's a local, the result of the initializer is
+  // in the correct slot on the stack already so we're done.
+  if (compiler.scopeDepth >= 0) {
+    return;
+  }
+
+  // It's a module-level variable, so store the value in the module slot and
+  // then discard the temporary for the initializer.
+  emitShortArg(compiler, CODE_STORE_MODULE_VAR, symbol);
+  emitOp(compiler, CODE_POP);
+}
+
+// Starts a new local block scope.
+function pushScope(compiler) {
+  compiler.scopeDepth++;
+}
+
+// Generates code to discard local variables at [depth] or greater. Does *not*
+// actually undeclare variables or pop any scopes, though. This is called
+// directly when compiling "break" statements to ditch the local variables
+// before jumping out of the loop even though they are still in scope *past*
+// the break instruction.
+//
+// Returns the number of local variables that were eliminated.
+function discardLocals(compiler, depth) {
+  assert(compiler.scopeDepth > -1, "Cannot exit top-level scope.");
+
+  var local = compiler.numLocals - 1;
+  while (local >= 0 && compiler.locals[local].depth >= depth) {
+    // If the local was closed over, make sure the upvalue gets closed when it
+    // goes out of scope on the stack. We use emitByte() and not emitOp() here
+    // because we don't want to track that stack effect of these pops since the
+    // variables are still in scope after the break.
+    if (compiler.locals[local].isUpvalue) {
+      emitByte(compiler, CODE_CLOSE_UPVALUE);
+    } else {
+      emitByte(compiler, CODE_POP);
+    }
+
+    local--;
+  }
+
+  return compiler.numLocals - local - 1;
+}
+
+// Closes the last pushed block scope and discards any local variables declared
+// in that scope. This should only be called in a statement context where no
+// temporaries are still on the stack.
+function popScope(compiler) {
+  var popped = discardLocals(compiler, compiler.scopeDepth);
+  compiler.numLocals -= popped;
+  compiler.numSlots -= popped;
+  compiler.scopeDepth--;
+}
+
+// Attempts to look up the name in the local variables of [compiler]. If found,
+// returns its index, otherwise returns -1.
+function resolveLocal(compiler, name, length) {
+  // Look it up in the local scopes. Look in reverse order so that the most
+  // nested variable is found first and shadows outer ones.
+  for (var i = compiler.numLocals - 1; i >= 0; i--) {
+    if (compiler.locals[i].length == length &&
+      name === compiler.locals[i].name) {
+      return i;
+    }
+  }
+
+  return -1;
+}
+
+// Adds an upvalue to [compiler]'s function with the given properties. Does not
+// add one if an upvalue for that variable is already in the list. Returns the
+// index of the upvalue.
+function addUpvalue(compiler, isLocal, index) {
+  // Look for an existing one.
+  for (var i = 0; i < compiler.fn.numUpvalues; i++) {
+    var upvalue = compiler.upvalues[i];
+    if (upvalue.index === index && upvalue.isLocal === isLocal) return i;
+  }
+
+  // If we got here, it's a new upvalue.
+  compiler.upvalues[compiler.fn.numUpvalues].isLocal = isLocal;
+  compiler.upvalues[compiler.fn.numUpvalues].index = index;
+  return compiler.fn.numUpvalues++;
+}
+
+// Attempts to look up [name] in the functions enclosing the one being compiled
+// by [compiler]. If found, it adds an upvalue for it to this compiler's list
+// of upvalues (unless it's already in there) and returns its index. If not
+// found, returns -1.
+//
+// If the name is found outside of the immediately enclosing function, this
+// will flatten the closure and add upvalues to all of the intermediate
+// functions so that it gets walked down to this one.
+//
+// If it reaches a method boundary, this stops and returns -1 since methods do
+// not close over local variables.
+function findUpvalue(compiler, name, length) {
+  // If we are at the top level, we didn't find it.
+  if (compiler.parent === null) {
+    return -1;
+  }
+
+  // If we hit the method boundary (and the name isn't a static field), then
+  // stop looking for it. We'll instead treat it as a self send.
+  if (name[0] !== '_' && compiler.parent.enclosingClass !== null) {
+    return -1;
+  }
+
+  // See if it's a local variable in the immediately enclosing function.
+  var local = resolveLocal(compiler.parent, name, length);
+  if (local != -1) {
+    // Mark the local as an upvalue so we know to close it when it goes out of
+    // scope.
+    compiler.parent.locals[local].isUpvalue = true;
+
+    return addUpvalue(compiler, true, local);
+  }
+
+  // See if it's an upvalue in the immediately enclosing function. In other
+  // words, if it's a local variable in a non-immediately enclosing function.
+  // This "flattens" closures automatically: it adds upvalues to all of the
+  // intermediate functions to get from the function where a local is declared
+  // all the way into the possibly deeply nested function that is closing over
+  // it.
+  var upvalue = findUpvalue(compiler.parent, name, length);
+  if (upvalue !== -1) {
+    return addUpvalue(compiler, false, upvalue);
+  }
+
+  // If we got here, we walked all the way up the parent chain and couldn't
+  // find it.
+  return -1;
+}
+
+// Look up [name] in the current scope to see what variable it refers to.
+// Returns the variable either in local scope, or the enclosing function's
+// upvalue list. Does not search the module scope. Returns a variable with
+// index -1 if not found.
+function resolveNonmodule(compiler, name, length) {
+  // Look it up in the local scopes.
+  var variable;
+  variable.scope = SCOPE_LOCAL;
+  variable.index = resolveLocal(compiler, name, length);
+  if (variable.index != -1) return variable;
+
+  // It's not a local, so guess that it's an upvalue.
+  variable.scope = SCOPE_UPVALUE;
+  variable.index = findUpvalue(compiler, name, length);
+  return variable;
+}
+
+// Look up [name] in the current scope to see what variable it refers to.
+// Returns the variable either in module scope, local scope, or the enclosing
+// function's upvalue list. Returns a variable with index -1 if not found.
+function resolveName(compiler, name, length) {
+  var variable = resolveNonmodule(compiler, name, length);
+  if (variable.index != -1) {
+    return variable;
+  }
+
+  variable.scope = SCOPE_MODULE;
+  variable.index = wrenSymbolTableFind(compiler.parser.module.variableNames,
+                                       name, length);
+  return variable;
+}
+
+function loadLocal(compiler, slot) {
+  if (slot <= 8) {
+    emitOp(compiler, (CODE_LOAD_LOCAL_0 + slot));
+    return;
+  }
+
+  emitByteArg(compiler, CODE_LOAD_LOCAL, slot);
+}
+
+// Finishes [compiler], which is compiling a function, method, or chunk of top
+// level code. If there is a parent compiler, then this emits code in the
+// parent compiler to load the resulting function.
+function endCompiler(compiler, debugName, debugNameLength) {
+  // If we hit an error, don't finish the function since it's borked anyway.
+  if (compiler.parser.hasError) {
+    compiler.parser.vm.compiler = compiler.parent;
+    return null;
+  }
+
+  // Mark the end of the bytecode. Since it may contain multiple early returns,
+  // we can't rely on CODE_RETURN to tell us we're at the end.
+  emitOp(compiler, CODE_END);
+
+  wrenFunctionBindName(compiler.parser.vm, compiler.fn,
+                       debugName, debugNameLength);
+
+  // In the function that contains this one, load the resulting function object.
+  if (compiler.parent !== null) {
+    var constant = addConstant(compiler.parent, compiler.fn);
+
+    // If the function has no upvalues, we don't need to create a closure.
+    // We can just load and run the function directly.
+    if (compiler.fn.numUpvalues === 0) {
+      emitShortArg(compiler.parent, CODE_CONSTANT, constant);
+    } else {
+      // Capture the upvalues in the new closure object.
+      emitShortArg(compiler.parent, CODE_CLOSURE, constant);
+
+      // Emit arguments for each upvalue to know whether to capture a local or
+      // an upvalue.
+      for (var i = 0; i < compiler.fn.numUpvalues; i++) {
+        emitByte(compiler.parent, compiler.upvalues[i].isLocal ? 1 : 0);
+        emitByte(compiler.parent, compiler.upvalues[i].index);
+      }
+    }
+  }
+
+  // Pop this compiler off the stack.
+  compiler.parser.vm.compiler = compiler.parent;
+
+  if (WREN_DEBUG_DUMP_COMPILED_CODE) {
+    wrenDumpCode(compiler.parser.vm, compiler.fn);
+  }
+
+  return compiler.fn;
+}
+
+// Grammar ---------------------------------------------------------------------
+
+var Precedence = {
+  PREC_NONE: 0,
+  PREC_LOWEST: 1,
+  PREC_ASSIGNMENT: 2,     // =
+  PREC_CONDITIONAL: 3,    // ?:
+  PREC_LOGICAL_OR: 4,     // ||
+  PREC_LOGICAL_AND: 5,    // &&
+  PREC_EQUALITY: 6,       // == !=
+  PREC_IS: 7,             // is
+  PREC_COMPARISON: 8,     // < > <= >=
+  PREC_BITWISE_OR: 9,     // |
+  PREC_BITWISE_XOR: 10,   // ^
+  PREC_BITWISE_AND: 11,   // &
+  PREC_BITWISE_SHIFT: 12, // << >>
+  PREC_RANGE: 13,         // .. ...
+  PREC_TERM: 14,          // + -
+  PREC_FACTOR: 15,        // * / %
+  PREC_UNARY: 16,         // unary - ! ~
+  PREC_CALL: 17,          // . () []
+  PREC_PRIMARY: 18
+};
+
+var GrammarRule = {
+  prefix: undefined,
+  infix: undefined,
+  method: undefined,
+  precedence: undefined,
+  name: undefined
+};
+
+// Forward declarations since the grammar is recursive.
+function getRule(type){}
+function expression(compiler) {}
+function statement(compiler) {}
+function definition(compiler) {}
+function parsePrecedence(compiler, precedence) {}
+
+// Replaces the placeholder argument for a previous CODE_JUMP or CODE_JUMP_IF
+// instruction with an offset that jumps to the current end of bytecode.
+function patchJump(compiler, offset) {
+  // -2 to adjust for the bytecode for the jump offset itself.
+  var jump = compiler.fn.code.count - offset - 2;
+  if (jump > MAX_JUMP) {
+    error(compiler, "Too much code to jump over.");
+  }
+
+  compiler.fn.code.data[offset] = (jump >> 8) & 0xff;
+  compiler.fn.code.data[offset + 1] = jump & 0xff;
+}
+
+// Parses a block body, after the initial "{" has been consumed.
+//
+// Returns true if it was a expression body, false if it was a statement body.
+// (More precisely, returns true if a value was left on the stack. An empty
+// block returns false.)
+function finishBlock(compiler) {
+  // Empty blocks do nothing.
+  if (match(compiler, TokenType.TOKEN_RIGHT_BRACE)) {
+    return false;
+  }
+
+  // If there's no line after the "{", it's a single-expression body.
+  if (!matchLine(compiler)) {
+    expression(compiler);
+    consume(compiler, TokenType.TOKEN_RIGHT_BRACE, "Expect '}' at end of block.");
+    return true;
+  }
+
+  // Empty blocks (with just a newline inside) do nothing.
+  if (match(compiler, TokenType.TOKEN_RIGHT_BRACE)) {
+    return false;
+  }
+
+  // Compile the definition list.
+  do {
+    definition(compiler);
+
+    // If we got into a weird error state, don't get stuck in a loop.
+    if (peek(compiler) === TokenType.TOKEN_EOF) return true;
+
+    consumeLine(compiler, "Expect newline after statement.");
+  } while (!match(compiler, TokenType.TOKEN_RIGHT_BRACE));
+  return false;
+}
+
+// Parses a method or function body, after the initial "{" has been consumed.
+//
+// It [isInitializer] is `true`, this is the body of a constructor initializer.
+// In that case, this adds the code to ensure it returns `this`.
+function finishBody(compiler, isInitializer) {
+  var isExpressionBody = finishBlock(compiler);
+
+  if (isInitializer) {
+    // If the initializer body evaluates to a value, discard it.
+    if (isExpressionBody) {
+      emitOp(compiler, CODE_POP);
+    }
+
+    // The receiver is always stored in the first local slot.
+    emitOp(compiler, CODE_LOAD_LOCAL_0);
+  } else if (!isExpressionBody) {
+    // Implicitly return null in statement bodies.
+    emitOp(compiler, CODE_NULL);
+  }
+
+  emitOp(compiler, CODE_RETURN);
+}
+
+// The VM can only handle a certain number of parameters, so check that we
+// haven't exceeded that and give a usable error.
+function validateNumParameters(compiler, numArgs) {
+  if (numArgs === MAX_PARAMETERS + 1) {
+    // Only show an error at exactly max + 1 so that we can keep parsing the
+    // parameters and minimize cascaded errors.
+    error(compiler, "Methods cannot have more than %x parameters.",
+          MAX_PARAMETERS);
+  }
+}
+
+// Parses the rest of a comma-separated parameter list after the opening
+// delimeter. Updates `arity` in [signature] with the number of parameters.
+function finishParameterList(compiler, signature) {
+  do {
+    ignoreNewlines(compiler);
+    validateNumParameters(compiler, ++signature.arity);
+
+    // Define a local variable in the method for the parameter.
+    declareNamedVariable(compiler);
+  }
+  while (match(compiler, TokenType.TOKEN_COMMA));
+}
+
+// Gets the symbol for a method [name] with [length].
+function methodSymbol(compiler, name, length) {
+  return wrenSymbolTableEnsure(compiler.parser.vm,
+      compiler.parser.vm.methodNames, name, length);
+}
+
+// Appends characters to [name] (and updates [length]) for [numParams] "_"
+// surrounded by [leftBracket] and [rightBracket].
+function signatureParameterList(name, length, numParams, leftBracket, rightBracket) {
+  name[(length)++] = leftBracket;
+  for (var i = 0; i < numParams; i++) {
+    if (i > 0) name[(length)++] = ',';
+    name[(length)++] = '_';
+  }
+  name[(length)++] = rightBracket;
+}
+
+// Fills [name] with the stringified version of [signature] and updates
+// [length] to the resulting length.
+function signatureToString(signature, name, length) {
+  length = 0;
+
+  // Build the full name from the signature.
+  memcpy(name + length, signature.name, signature.length);
+  length += signature.length;
+
+  switch (signature.type) {
+    case SIG_METHOD:
+      signatureParameterList(name, length, signature.arity, '(', ')');
+      break;
+
+    case SIG_GETTER:
+      // The signature is just the name.
+      break;
+
+    case SIG_SETTER:
+      name[(length)++] = '=';
+      signatureParameterList(name, length, 1, '(', ')');
+      break;
+
+    case SIG_SUBSCRIPT:
+      signatureParameterList(name, length, signature.arity, '[', ']');
+      break;
+
+    case SIG_SUBSCRIPT_SETTER:
+      signatureParameterList(name, length, signature.arity - 1, '[', ']');
+      name[(length)++] = '=';
+      signatureParameterList(name, length, 1, '(', ')');
+      break;
+
+    case SIG_INITIALIZER:
+      memcpy(name, "init ", 5);
+      memcpy(name + 5, signature.name, signature.length);
+      length = 5 + signature.length;
+      signatureParameterList(name, length, signature.arity, '(', ')');
+      break;
+  }
+
+  name[length] = '\n0000';
 }
