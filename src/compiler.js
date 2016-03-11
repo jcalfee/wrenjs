@@ -1,5 +1,53 @@
+var printf = require('./c/printf');
+module.value = require('./value');
 
-require('./common.js');
+// This module defines the compiler for Wren. It takes a string of source code
+// and lexes, parses, and compiles it. Wren uses a single-pass compiler. It
+// does not build an actual AST during parsing and then consume that to
+// generate code. Instead, the parser directly emits bytecode.
+//
+// This forces a few restrictions on the grammar and semantics of the language.
+// Things like forward references and arbitrary lookahead are much harder. We
+// get a lot in return for that, though.
+//
+// The implementation is much simpler since we don't need to define a bunch of
+// AST data structures. More so, we don't have to deal with managing memory for
+// AST objects. The compiler does almost no dynamic allocation while running.
+//
+// Compilation is also faster since we don't create a bunch of temporary data
+// structures and destroy them after generating code.
+
+// Adding properties to this object will make them available to outside scripts.
+module.exports = {
+  sCompiler: sCompiler,
+
+  // Compiles [source], a string of Wren source code located in [module], to an
+  // [ObjFn] that will execute that code when invoked. Returns `NULL` if the
+  // source contains any syntax errors.
+  //
+  // If [printErrors] is `true`, any compile errors are output to stderr.
+  // Otherwise, they are silently discarded.
+  wrenCompile: wrenCompile,
+
+  // When a class is defined, its superclass is not known until runtime since
+  // class definitions are just imperative statements. Most of the bytecode for a
+  // a method doesn't care, but there are two places where it matters:
+  //
+  //   - To load or store a field, we need to know the index of the field in the
+  //     instance's field array. We need to adjust this so that subclass fields
+  //     are positioned after superclass fields, and we don't know this until the
+  //     superclass is known.
+  //
+  //   - Superclass calls need to know which superclass to dispatch to.
+  //
+  // We could handle this dynamically, but that adds overhead. Instead, when a
+  // method is bound, we walk the bytecode for the function and patch it up.
+  wrenBindMethodCode: wrenBindMethodCode,
+
+  // Reaches all of the heap-allocated objects in use by [compiler] (and all of
+  // its parents) so that they are not collected by the GC.
+  wrenMarkCompiler: wrenMarkCompiler
+};
 
 // This is written in bottom-up order, so the tokenization comes first, then
 // parsing/code generation. This minimizes the number of explicit forward
@@ -343,13 +391,13 @@ var Variable = {
 
 // The stack effect of each opcode. The index in the array is the opcode, and
 // the value is the stack effect of that instruction.
-var stackEffects;// = require('opcodes.js'); // TODO opcodes.js
+var stackEffects = require('./opcodes.js');
 
 // Outputs a compile or syntax error. This also marks the compilation as having
 // an error, which ensures that the resulting code will be discarded and never
 // run. This means that after calling lexError(), it's fine to generate whatever
 // invalid bytecode you want since it won't be used.
-function lexError(parser) {
+function lexError(parser, format) {
   'use strict';
 
   parser.hasError = true;
@@ -357,15 +405,17 @@ function lexError(parser) {
     return;
   }
 
-  var err = "[" + parser.module.name.value + " line " + parser.currentLine + "] Error: ";
+  var err = printf("[%x line %x] Error: ",
+          parser.module.name.value, parser.currentLine);
 
   arguments.forEach(function(arg, i, args) {
     if (i > 0) {
-      err += args[arg];
+      err += printf(format, args);
     }
   });
+  err += "\n";
 
-  console.log(err + "\n");
+  console.log(err);
 }
 
 // Outputs a compile or syntax error. This also marks the compilation as having
@@ -376,7 +426,7 @@ function lexError(parser) {
 // You'll note that most places that call error() continue to parse and compile
 // after that. That's so that we can try to find as many compilation errors in
 // one pass as possible instead of just bailing at the first one.
-function error(compiler) {
+function error(compiler, format) {
   'use strict';
 
   compiler.parser.hasError = true;
@@ -384,8 +434,7 @@ function error(compiler) {
     return;
   }
 
-  var err,
-      token = compiler.parser.previous;
+  var token = compiler.parser.previous;
 
   // If the parse error was caused by an error token, the lexer has already
   // reported it.
@@ -393,24 +442,26 @@ function error(compiler) {
     return;
   }
 
-  err = "[" + compiler.parser.module.name.value +
-    " line " + token.line + "] Error at ";
+  var err = printf("[%x line %x] Error at ",
+    compiler.parser.module.name.value, token.line);
 
   if (token.type === TokenType.TOKEN_LINE) {
-    err += "newline: ";
+    err += printf("newline: ");
   } else if (token.type === TokenType.TOKEN_EOF) {
-    err +=  "end of file: ";
+    err += printf("end of file: ");
   } else {
-    err += "'" + token.start + "'";
+    err += printf("'%x': ", token.length, token.start);
   }
 
   arguments.forEach(function(arg, i, args) {
-    if (i > 1) {
-      err += args[arg];
+    if (i > 2) {
+      err += fprintf(format, arg);
     }
   });
 
-  console.log(err + "\n");
+  err += "\n";
+
+  console.log(err);
 }
 
 // Adds [constant] to the constant pool and returns its index.
@@ -422,23 +473,24 @@ function addConstant(compiler, constant) {
   }
 
   if (compiler.fn.constants.count < MAX_CONSTANTS) {
-    if (IS_OBJ(constant)) {
-      wrenPushRoot(compiler.parser.vm, AS_OBJ(constant));
+    if (module.value.IS_OBJ(constant)) {
+      wrenPushRoot(compiler.parser.vm, constant);
     }
     wrenValueBufferWrite(compiler.parser.vm, compiler.fn.constants,
                          constant);
-    if (IS_OBJ(constant)) {
+    if (module.value.IS_OBJ(constant)) {
       wrenPopRoot(compiler.parser.vm);
     }
   } else {
-    error(compiler, "A function may only contain " + MAX_CONSTANTS + " unique constants.");
+    error(compiler, "A function may only contain %x unique constants.",
+      MAX_CONSTANTS);
   }
 
   return compiler.fn.constants.count - 1;
 }
 
 // Initializes [compiler]
-function initCompiler(compiler, parser, parent, isFunction) {
+function initCompiler (compiler, parser, parent, isFunction) {
   'use strict';
 
   compiler.parser = parser;
@@ -481,13 +533,11 @@ function initCompiler(compiler, parser, parent, isFunction) {
 
   compiler.numSlots = compiler.numLocals;
 
-  compiler.fn = wrenNewFunction(parser.vm, parser.module,
+  compiler.fn = module.value.wrenNewFunction(parser.vm, parser.module,
                                  compiler.numLocals);
 }
 
 // Lexing ----------------------------------------------------------------------
-
-// TODO: Turn Keyword into an enum.
 
 // Keyword class
 var Keyword = function(identifier, length, tokenType) {
@@ -543,8 +593,8 @@ function peekChar(parser) {
 function peekNextChar(parser) {
   'use strict';
   // If we're at the end of the source, don't read past it.
-  if (peekChar(parser) === '\0') {
-    return '\0';
+  if (peekChar(parser) === '\u0000') {
+    return '\u0000';
   }
   return (parser.currentChar + 1);
 }
@@ -606,7 +656,7 @@ function skipBlockComment(parser) {
   'use strict';
   var nesting = 1;
   while (nesting > 0) {
-    if (peekChar(parser) === '\0') {
+    if (peekChar(parser) === '\u0000') {
       lexError(parser, "Unterminated block comment.");
       return;
     }
@@ -658,12 +708,12 @@ function makeNumber(parser, isHex) {
 
   // We don't check that the entire token is consumed because we've already
   // scanned it ourselves and know it's valid.
-  parser.current.value = NUM_VAL(isHex ? strtol(parser.tokenStart, null, 16)
-                                        : strtod(parser.tokenStart, null));
+  parser.current.value = isHex ? strtol(parser.tokenStart, null, 16)
+                                        : strtod(parser.tokenStart, null);
 
   if (errno === ERANGE) {
     lexError(parser, "Number literal was too large.");
-    parser.current.value = NUM_VAL(0);
+    parser.current.value = 0;
   }
 
   makeToken(parser, TokenType.TOKEN_NUMBER);
@@ -714,4 +764,282 @@ function readNumber(parser) {
   }
 
   makeNumber(parser, false);
+}
+
+// Finishes lexing an identifier. Handles reserved words.
+function readName(parser, type) {
+  while (isName(peekChar(parser)) || isDigit(peekChar(parser))) {
+    nextChar(parser);
+  }
+
+  // Update the type if it's a keyword.
+  var length = parser.currentChar - parser.tokenStart;
+  for (var i = 0; keywords[i].identifier !== null; i++) {
+    if (length === keywords[i].length && parser.tokenStart === keywords[i].identifier) {
+      type = keywords[i].tokenType;
+      break;
+    }
+  }
+
+  makeToken(parser, type);
+}
+
+// Reads [digits] hex digits in a string literal and returns their number value.
+function readHexEscape(parser, digits, description) {
+  var value = 0;
+  for (var i = 0; i < digits; i++) {
+    if (peekChar(parser) === '"' || peekChar(parser) === '\u0000') {
+      lexError(parser, "Incomplete %x escape sequence.", description);
+
+      // Don't consume it if it isn't expected. Keeps us from reading past the
+      // end of an unterminated string.
+      parser.currentChar--;
+      break;
+    }
+
+    var digit = readHexDigit(parser);
+    if (digit === -1) {
+      lexError(parser, "Invalid %s escape sequence.", description);
+      break;
+    }
+
+    value = (value * 16) | digit;
+  }
+
+  return value;
+}
+
+// Reads a hex digit Unicode escape sequence in a string literal.
+function readUnicodeEscape(parser, string, length)
+{
+  var value = readHexEscape(parser, length, "Unicode");
+
+  // Grow the buffer enough for the encoded result.
+  var numBytes = wrenUtf8EncodeNumBytes(value);
+  if (numBytes !== 0) {
+    wrenByteBufferFill(parser.vm, string, 0, numBytes);
+    wrenUtf8Encode(value, string.data + string.count - numBytes);
+  }
+}
+
+// Finishes lexing a string literal.
+function readString(parser) {
+  var string;
+  type = TokenType.TOKEN_STRING;
+  wrenByteBufferInit(string);
+
+  for (;;) {
+    var c = nextChar(parser);
+    if (c === '"') break;
+
+    if (c === '\n0000')
+    {
+      lexError(parser, "Unterminated string.");
+
+      // Don't consume it if it isn't expected. Keeps us from reading past the
+      // end of an unterminated string.
+      parser.currentChar--;
+      break;
+    }
+
+    if (c === '%') {
+      if (parser.numParens < MAX_INTERPOLATION_NESTING) {
+        // TODO: Allow format string.
+        if (nextChar(parser) !== '(') lexError(parser, "Expect '(' after '%%'.");
+
+        parser.parens[parser.numParens++] = 1;
+        type = TokenType.TOKEN_INTERPOLATION;
+        break;
+      }
+
+      lexError(parser, "Interpolation may only nest %x levels deep.",
+               MAX_INTERPOLATION_NESTING);
+    }
+
+    if (c === '\\') {
+      switch (nextChar(parser)) {
+        case '"':  wrenByteBufferWrite(parser.vm, string, '"'); break;
+        case '\\': wrenByteBufferWrite(parser.vm, string, '\\'); break;
+        case '%':  wrenByteBufferWrite(parser.vm, string, '%'); break;
+        case '0':  wrenByteBufferWrite(parser.vm, string, '\n0000'); break;
+        case 'a':  wrenByteBufferWrite(parser.vm, string, '\a'); break;
+        case 'b':  wrenByteBufferWrite(parser.vm, string, '\b'); break;
+        case 'f':  wrenByteBufferWrite(parser.vm, string, '\f'); break;
+        case 'n':  wrenByteBufferWrite(parser.vm, string, '\n'); break;
+        case 'r':  wrenByteBufferWrite(parser.vm, string, '\r'); break;
+        case 't':  wrenByteBufferWrite(parser.vm, string, '\t'); break;
+        case 'u':  readUnicodeEscape(parser, string, 4); break;
+        case 'U':  readUnicodeEscape(parser, string, 8); break;
+        case 'v':  wrenByteBufferWrite(parser.vm, string, '\v'); break;
+        case 'x':
+          wrenByteBufferWrite(parser.vm, string, readHexEscape(parser, 2, "byte"));
+          break;
+
+        default:
+          lexError(parser, "Invalid escape character '%x'.",
+                   (parser.currentChar - 1));
+          break;
+      }
+    }
+    else
+    {
+      wrenByteBufferWrite(parser.vm, string, c);
+    }
+  }
+
+  parser.current.value = wrenNewString(parser.vm, string.data, string.count);
+
+  wrenByteBufferClear(parser.vm, string);
+  makeToken(parser, type);
+}
+
+// Lex the next token and store it in [parser.current].
+function nextToken(parser) {
+  parser.previous = parser.current;
+
+  // If we are out of tokens, don't try to tokenize any more. We *do* still
+  // copy the TOKEN_EOF to previous so that code that expects it to be consumed
+  // will still work.
+  if (parser.current.type === TokenType.TOKEN_EOF) {
+    return;
+  }
+
+  while (peekChar(parser) !== '\n0000') {
+    parser.tokenStart = parser.currentChar;
+
+    var c = nextChar(parser);
+    switch (c) {
+      case '(':
+        // If we are inside an interpolated expression, count the unmatched "(".
+        if (parser.numParens > 0) parser.parens[parser.numParens - 1]++;
+        makeToken(parser, TokenType.TOKEN_LEFT_PAREN);
+        return;
+
+      case ')':
+        // If we are inside an interpolated expression, count the ")".
+        if (parser.numParens > 0 &&
+            --parser.parens[parser.numParens - 1] === 0) {
+          // This is the final ")", so the interpolation expression has ended.
+          // This ")" now begins the next section of the template string.
+          parser->numParens--;
+          readString(parser);
+          return;
+        }
+
+        makeToken(parser, TokenType.TOKEN_RIGHT_PAREN);
+        return;
+
+      case '[': makeToken(parser, TokenType.TOKEN_LEFT_BRACKET); return;
+      case ']': makeToken(parser, TokenType.TOKEN_RIGHT_BRACKET); return;
+      case '{': makeToken(parser, TokenType.TOKEN_LEFT_BRACE); return;
+      case '}': makeToken(parser, TokenType.TOKEN_RIGHT_BRACE); return;
+      case ':': makeToken(parser, TokenType.TOKEN_COLON); return;
+      case ',': makeToken(parser, TokenType.TOKEN_COMMA); return;
+      case '*': makeToken(parser, TokenType.TOKEN_STAR); return;
+      case '%': makeToken(parser, TokenType.TOKEN_PERCENT); return;
+      case '^': makeToken(parser, TokenType.TOKEN_CARET); return;
+      case '+': makeToken(parser, TokenType.TOKEN_PLUS); return;
+      case '-': makeToken(parser, TokenType.TOKEN_MINUS); return;
+      case '~': makeToken(parser, TokenType.TOKEN_TILDE); return;
+      case '?': makeToken(parser, TokenType.TOKEN_QUESTION); return;
+
+      case '|': twoCharToken(parser, '|', TokenType.TOKEN_PIPEPIPE, TokenType.TOKEN_PIPE); return;
+      case '&': twoCharToken(parser, '&', TokenType.TOKEN_AMPAMP, TokenType.TOKEN_AMP); return;
+      case '=': twoCharToken(parser, '=', TokenType.TOKEN_EQEQ, TokenType.TOKEN_EQ); return;
+      case '!': twoCharToken(parser, '=', TokenType.TOKEN_BANGEQ, TokenType.TOKEN_BANG); return;
+
+      case '.':
+        if (matchChar(parser, '.')) {
+          twoCharToken(parser, '.', TokenType.TOKEN_DOTDOTDOT, TokenType.TOKEN_DOTDOT);
+          return;
+        }
+
+        makeToken(parser, TokenType.TOKEN_DOT);
+        return;
+
+      case '/':
+        if (matchChar(parser, '/')) {
+          skipLineComment(parser);
+          break;
+        }
+
+        if (matchChar(parser, '*')) {
+          skipBlockComment(parser);
+          break;
+        }
+
+        makeToken(parser, TokenType.TOKEN_SLASH);
+        return;
+
+      case '<':
+        if (matchChar(parser, '<')) {
+          makeToken(parser, TokenType.TOKEN_LTLT);
+        } else {
+          twoCharToken(parser, '=', TokenType.TOKEN_LTEQ, TokenType.TOKEN_LT);
+        }
+        return;
+
+      case '>':
+        if (matchChar(parser, '>')) {
+          makeToken(parser, TokenType.TOKEN_GTGT);
+        } else {
+          twoCharToken(parser, '=', TokenType.TOKEN_GTEQ, TokenType.TOKEN_GT);
+        }
+        return;
+
+      case '\n':
+        makeToken(parser, TokenType.TOKEN_LINE);
+        return;
+
+      case ' ':
+      case '\r':
+      case '\t':
+        // Skip forward until we run out of whitespace.
+        while (peekChar(parser) == ' ' ||
+               peekChar(parser) == '\r' ||
+               peekChar(parser) == '\t') {
+          nextChar(parser);
+        }
+        break;
+
+      case '"': readString(parser); return;
+      case '_':
+        readName(parser,
+                 peekChar(parser) == '_' ? TokenType.TOKEN_STATIC_FIELD : TokenType.TOKEN_FIELD);
+        return;
+
+      case '#':
+        // Ignore shebang on the first line.
+        if (peekChar(parser) == '!' && parser.currentLine == 1) {
+          skipLineComment(parser);
+          break;
+        }
+
+        lexError(parser, "Invalid character '%x'.", c);
+        return;
+
+      case '0':
+        if (peekChar(parser) == 'x') {
+          readHexNumber(parser);
+          return;
+        }
+
+        readNumber(parser);
+        return;
+
+      default:
+        if (isName(c)) {
+          readName(parser, TOKEN_NAME);
+        } else if (isDigit(c)) {
+          readNumber(parser);
+        } else {
+          lexError(parser, "Invalid character '%x'.", c);
+        }
+        return;
+    }
+  }
+
+  // If we get here, we're out of source, so just make EOF tokens.
+  parser.tokenStart = parser.currentChar;
+  makeToken(parser, TOKEN_EOF);
 }
