@@ -1648,3 +1648,167 @@ function signatureToString(signature, name, length) {
 
   name[length] = '\n0000';
 }
+
+// Gets the symbol for a method with [signature].
+function signatureSymbol(compiler, signature) {
+  // Build the full name from the signature.
+  var name;
+  var length;
+  signatureToString(signature, name, length);
+
+  return methodSymbol(compiler, name, length);
+}
+
+// Returns a signature with [type] whose name is from the last consumed token.
+function signatureFromToken(compiler, type) {
+  var signature;
+
+  // Get the token for the method name.
+  var token = compiler.parser.previous;
+  signature.name = token.start;
+  signature.length = token.length;
+  signature.type = type;
+  signature.arity = 0;
+
+  if (signature.length > MAX_METHOD_NAME) {
+    error(compiler, "Method names cannot be longer than %x characters.",
+          MAX_METHOD_NAME);
+    signature.length = MAX_METHOD_NAME;
+  }
+
+  return signature;
+}
+
+// Parses a comma-separated list of arguments. Modifies [signature] to include
+// the arity of the argument list.
+function finishArgumentList(compiler, signature) {
+  do {
+    ignoreNewlines(compiler);
+    validateNumParameters(compiler, ++signature.arity);
+    expression(compiler);
+  } while (match(compiler, TokenType.TOKEN_COMMA));
+
+  // Allow a newline before the closing delimiter.
+  ignoreNewlines(compiler);
+}
+
+// Compiles a method call with [signature] using [instruction].
+function callSignature(compiler, instruction, signature) {
+  var symbol = signatureSymbol(compiler, signature);
+  emitShortArg(compiler, instruction + signature.arity, symbol);
+
+  if (instruction === CODE_SUPER_0) {
+    // Super calls need to be statically bound to the class's superclass. This
+    // ensures we call the right method even when a method containing a super
+    // call is inherited by another subclass.
+    //
+    // We bind it at class definition time by storing a reference to the
+    // superclass in a constant. So, here, we create a slot in the constant
+    // table and store NULL in it. When the method is bound, we'll look up the
+    // superclass then and store it in the constant slot.
+    emitShort(compiler, addConstant(compiler, NULL_VAL));
+  }
+}
+
+// Compiles a method call with [numArgs] for a method with [name] with [length].
+function callMethod(compiler, numArgs, name, length) {
+  var symbol = methodSymbol(compiler, name, length);
+  emitShortArg(compiler, CODE_CALL_0 + numArgs, symbol);
+}
+
+// Compiles an (optional) argument list for a method call with [methodSignature]
+// and then calls it.
+function methodCall(compiler, instruction, signature) {
+  // Make a new signature that contains the updated arity and type based on
+  // the arguments we find.
+  var called = {
+    name: signature.name,
+    length: signature.length,
+    type: SIG_GETTER,
+    arity: 0
+  };
+
+  // Parse the argument list, if any.
+  if (match(compiler, TOKEN_LEFT_PAREN)) {
+    called.type = SIG_METHOD;
+
+    // Allow empty an argument list.
+    if (peek(compiler) != TokenType.TOKEN_RIGHT_PAREN) {
+      finishArgumentList(compiler, called);
+    }
+    consume(compiler, TokenType.TOKEN_RIGHT_PAREN, "Expect ')' after arguments.");
+  }
+
+  // Parse the block argument, if any.
+  if (match(compiler, TokenType.TOKEN_LEFT_BRACE)) {
+    // Include the block argument in the arity.
+    called.type = SIG_METHOD;
+    called.arity++;
+
+    var fnCompiler;
+    initCompiler(fnCompiler, compiler.parser, compiler, true);
+
+    // Make a dummy signature to track the arity.
+    var fnSignature = {
+      name: "",
+      length: 0,
+      type: SIG_METHOD,
+      arity: 0
+    };
+
+    // Parse the parameter list, if any.
+    if (match(compiler, TokenType.TOKEN_PIPE)) {
+      finishParameterList(fnCompiler, fnSignature);
+      consume(compiler, TokenType.TOKEN_PIPE, "Expect '|' after function parameters.");
+    }
+
+    fnCompiler.fn.arity = fnSignature.arity;
+
+    finishBody(fnCompiler, false);
+
+    // Name the function based on the method its passed to.
+    var blockName;
+    var blockLength;
+    signatureToString(called, blockName, blockLength);
+    memmove(blockName + blockLength, " block argument", 16);
+
+    endCompiler(fnCompiler, blockName, blockLength + 15);
+  }
+
+  // TODO: Allow Grace-style mixfix methods?
+
+  // If this is a super() call for an initializer, make sure we got an actual
+  // argument list.
+  if (signature.type == SIG_INITIALIZER) {
+    if (called.type != SIG_METHOD) {
+      error(compiler, "A superclass constructor must have an argument list.");
+    }
+
+    called.type = SIG_INITIALIZER;
+  }
+
+  callSignature(compiler, instruction, called);
+}
+
+// Compiles a call whose name is the previously consumed token. This includes
+// getters, method calls with arguments, and setter calls.
+function namedCall(compiler, canAssign, instruction) {
+  // Get the token for the method name.
+  var signature = signatureFromToken(compiler, SIG_GETTER);
+
+  if (canAssign && match(compiler, TokenType.TOKEN_EQ)) {
+    ignoreNewlines(compiler);
+
+    // Build the setter signature.
+    signature.type = SIG_SETTER;
+    signature.arity = 1;
+
+    // Compile the assigned value.
+    expression(compiler);
+    callSignature(compiler, instruction, signature);
+  }
+  else
+  {
+    methodCall(compiler, instruction, signature);
+  }
+}
