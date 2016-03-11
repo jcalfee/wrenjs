@@ -799,7 +799,7 @@ function readHexEscape(parser, digits, description) {
 
     var digit = readHexDigit(parser);
     if (digit === -1) {
-      lexError(parser, "Invalid %s escape sequence.", description);
+      lexError(parser, "Invalid %x escape sequence.", description);
       break;
     }
 
@@ -2678,4 +2678,662 @@ function getNumArguments(bytecode, constants, ip) {
       UNREACHABLE();
       return 0;
   }
+}
+
+// Marks the beginning of a loop. Keeps track of the current instruction so we
+// know what to loop back to at the end of the body.
+function startLoop(compiler, loop) {
+  loop.enclosing = compiler.loop;
+  loop.start = compiler.fn.code.count - 1;
+  loop.scopeDepth = compiler.scopeDepth;
+  compiler.loop = loop;
+}
+
+// Emits the [CODE_JUMP_IF] instruction used to test the loop condition and
+// potentially exit the loop. Keeps track of the instruction so we can patch it
+// later once we know where the end of the body is.
+function testExitLoop(compiler) {
+  compiler.loop.exitJump = emitJump(compiler, CODE_JUMP_IF);
+}
+
+// Compiles the body of the loop and tracks its extent so that contained "break"
+// statements can be handled correctly.
+function loopBody(compiler) {
+  compiler.loop.body = compiler.fn.code.count;
+  statement(compiler);
+}
+
+// Ends the current innermost loop. Patches up all jumps and breaks now that
+// we know where the end of the loop is.
+function endLoop(compiler) {
+  // We don't check for overflow here since the forward jump over the loop body
+  // will report an error for the same problem.
+  var loopOffset = compiler.fn.code.count - compiler.loop.start + 2;
+  emitShortArg(compiler, CODE_LOOP, loopOffset);
+
+  patchJump(compiler, compiler.loop.exitJump);
+
+  // Find any break placeholder instructions (which will be CODE_END in the
+  // bytecode) and replace them with real jumps.
+  var i = compiler.loop.body;
+  while (i < compiler.fn.code.count) {
+    if (compiler.fn.code.data[i] == CODE_END) {
+      compiler.fn.code.data[i] = CODE_JUMP;
+      patchJump(compiler, i + 1);
+      i += 3;
+    } else {
+      // Skip this instruction and its arguments.
+      i += 1 + getNumArguments(compiler.fn.code.data,
+                               compiler.fn.constants.data, i);
+    }
+  }
+
+  compiler.loop = compiler.loop.enclosing;
+}
+
+function forStatement(compiler) {
+  // A for statement like:
+  //
+  //     for (i in sequence.expression) {
+  //       System.print(i)
+  //     }
+  //
+  // Is compiled to bytecode almost as if the source looked like this:
+  //
+  //     {
+  //       var seq_ = sequence.expression
+  //       var iter_
+  //       while (iter_ = seq_.iterate(iter_)) {
+  //         var i = seq_.iteratorValue(iter_)
+  //         System.print(i)
+  //       }
+  //     }
+  //
+  // It's not exactly this, because the synthetic variables `seq_` and `iter_`
+  // actually get names that aren't valid Wren identfiers, but that's the basic
+  // idea.
+  //
+  // The important parts are:
+  // - The sequence expression is only evaluated once.
+  // - The .iterate() method is used to advance the iterator and determine if
+  //   it should exit the loop.
+  // - The .iteratorValue() method is used to get the value at the current
+  //   iterator position.
+
+  // Create a scope for the hidden local variables used for the iterator.
+  pushScope(compiler);
+
+  consume(compiler, TokenType.TOKEN_LEFT_PAREN, "Expect '(' after 'for'.");
+  consume(compiler, TokenType.TOKEN_NAME, "Expect for loop variable name.");
+
+  // Remember the name of the loop variable.
+  var name = compiler.parser.previous.start;
+  var length = compiler.parser.previous.length;
+
+  consume(compiler, TokenType.TOKEN_IN, "Expect 'in' after loop variable.");
+  ignoreNewlines(compiler);
+
+  // Evaluate the sequence expression and store it in a hidden local variable.
+  // The space in the variable name ensures it won't collide with a user-defined
+  // variable.
+  expression(compiler);
+  var seqSlot = addLocal(compiler, "seq ", 4);
+
+  // Create another hidden local for the iterator object.
+  null_(compiler, false);
+  var iterSlot = addLocal(compiler, "iter ", 5);
+
+  consume(compiler, TokenType.TOKEN_RIGHT_PAREN, "Expect ')' after loop expression.");
+
+  var loop;
+  startLoop(compiler, loop);
+
+  // Advance the iterator by calling the ".iterate" method on the sequence.
+  loadLocal(compiler, seqSlot);
+  loadLocal(compiler, iterSlot);
+
+  // Update and test the iterator.
+  callMethod(compiler, 1, "iterate(_)", 10);
+  emitByteArg(compiler, CODE_STORE_LOCAL, iterSlot);
+  testExitLoop(compiler);
+
+  // Get the current value in the sequence by calling ".iteratorValue".
+  loadLocal(compiler, seqSlot);
+  loadLocal(compiler, iterSlot);
+  callMethod(compiler, 1, "iteratorValue(_)", 16);
+
+  // Bind the loop variable in its own scope. This ensures we get a fresh
+  // variable each iteration so that closures for it don't all see the same one.
+  pushScope(compiler);
+  addLocal(compiler, name, length);
+
+  loopBody(compiler);
+
+  // Loop variable.
+  popScope(compiler);
+
+  endLoop(compiler);
+
+  // Hidden variables.
+  popScope(compiler);
+}
+
+function whileStatement(compiler) {
+  var loop;
+  startLoop(compiler, loop);
+
+  // Compile the condition.
+  consume(compiler, TokenType.TOKEN_LEFT_PAREN, "Expect '(' after 'while'.");
+  expression(compiler);
+  consume(compiler, TokenType.TOKEN_RIGHT_PAREN, "Expect ')' after while condition.");
+
+  testExitLoop(compiler);
+  loopBody(compiler);
+  endLoop(compiler);
+}
+
+// Compiles a simple statement. These can only appear at the top-level or
+// within curly blocks. Simple statements exclude variable binding statements
+// like "var" and "class" which are not allowed directly in places like the
+// branches of an "if" statement.
+//
+// Unlike expressions, statements do not leave a value on the stack.
+function statement(compiler) {
+  if (match(compiler, TokenType.TOKEN_BREAK)) {
+    if (compiler->loop === null) {
+      error(compiler, "Cannot use 'break' outside of a loop.");
+      return;
+    }
+
+    // Since we will be jumping out of the scope, make sure any locals in it
+    // are discarded first.
+    discardLocals(compiler, compiler.loop.scopeDepth + 1);
+
+    // Emit a placeholder instruction for the jump to the end of the body. When
+    // we're done compiling the loop body and know where the end is, we'll
+    // replace these with `CODE_JUMP` instructions with appropriate offsets.
+    // We use `CODE_END` here because that can't occur in the middle of
+    // bytecode.
+    emitJump(compiler, CODE_END);
+    return;
+  }
+
+  if (match(compiler, TokenType.TOKEN_FOR)) {
+    forStatement(compiler);
+    return;
+  }
+
+  if (match(compiler, TokenType.TOKEN_IF)) {
+    // Compile the condition.
+    consume(compiler, TokenType.TOKEN_LEFT_PAREN, "Expect '(' after 'if'.");
+    expression(compiler);
+    consume(compiler, TokenType.TOKEN_RIGHT_PAREN, "Expect ')' after if condition.");
+
+    // Jump to the else branch if the condition is false.
+    var ifJump = emitJump(compiler, CODE_JUMP_IF);
+
+    // Compile the then branch.
+    statement(compiler);
+
+    // Compile the else branch if there is one.
+    if (match(compiler, TokenType.TOKEN_ELSE)) {
+      // Jump over the else branch when the if branch is taken.
+      var elseJump = emitJump(compiler, CODE_JUMP);
+      patchJump(compiler, ifJump);
+
+      statement(compiler);
+
+      // Patch the jump over the else.
+      patchJump(compiler, elseJump);
+    } else {
+      patchJump(compiler, ifJump);
+    }
+
+    return;
+  }
+
+  if (match(compiler, TokenType.TOKEN_RETURN)) {
+    // Compile the return value.
+    if (peek(compiler) === TokenType.TOKEN_LINE) {
+      // Implicitly return null if there is no value.
+      emitOp(compiler, CODE_NULL);
+    } else {
+      expression(compiler);
+    }
+
+    emitOp(compiler, CODE_RETURN);
+    return;
+  }
+
+  if (match(compiler, TokenType.TOKEN_WHILE)) {
+    whileStatement(compiler);
+    return;
+  }
+
+  // Block statement.
+  if (match(compiler, TokenType.TOKEN_LEFT_BRACE)) {
+    pushScope(compiler);
+    if (finishBlock(compiler)) {
+      // Block was an expression, so discard it.
+      emitOp(compiler, CODE_POP);
+    }
+    popScope(compiler);
+    return;
+  }
+
+  // Expression statement.
+  expression(compiler);
+  emitOp(compiler, CODE_POP);
+}
+
+// Creates a matching constructor method for an initializer with [signature]
+// and [initializerSymbol].
+//
+// Construction is a two-stage process in Wren that involves two separate
+// methods. There is a static method that allocates a new instance of the class.
+// It then invokes an initializer method on the new instance, forwarding all of
+// the constructor arguments to it.
+//
+// The allocator method always has a fixed implementation:
+//
+//     CODE_CONSTRUCT - Replace the class in slot 0 with a new instance of it.
+//     CODE_CALL      - Invoke the initializer on the new instance.
+//
+// This creates that method and calls the initializer with [initializerSymbol].
+function createConstructor(compiler, signature, initializerSymbol) {
+  var methodCompiler;
+  initCompiler(methodCompiler, compiler.parser, compiler, false);
+
+  // Allocate the instance.
+  emitOp(methodCompiler,
+    compiler.enclosingClass.isForeign ? CODE_FOREIGN_CONSTRUCT : CODE_CONSTRUCT);
+
+  // Run its initializer.
+  emitShortArg(methodCompiler, (CODE_CALL_0 + signature.arity),
+               initializerSymbol);
+
+  // Return the instance.
+  emitOp(methodCompiler, CODE_RETURN);
+
+  endCompiler(methodCompiler, "", 0);
+}
+
+// Loads the enclosing class onto the stack and then binds the function already
+// on the stack as a method on that class.
+function defineMethod(compiler, classVariable, isStatic, methodSymbol) {
+  // Load the class. We have to do this for each method because we can't
+  // keep the class on top of the stack. If there are static fields, they
+  // will be locals above the initial variable slot for the class on the
+  // stack. To skip past those, we just load the class each time right before
+  // defining a method.
+  loadVariable(compiler, classVariable);
+
+  // Define the method.
+  var instruction = isStatic ? CODE_METHOD_STATIC : CODE_METHOD_INSTANCE;
+  emitShortArg(compiler, instruction, methodSymbol);
+}
+
+// Compiles a method definition inside a class body.
+//
+// Returns `true` if it compiled successfully, or `false` if the method couldn't
+// be parsed.
+function method(compiler, classVariable) {
+  // TODO: What about foreign constructors?
+  var isForeign = match(compiler, TokenType.TOKEN_FOREIGN);
+  compiler.enclosingClass.inStatic = match(compiler, TokenType.TOKEN_STATIC);
+
+  var signatureFn = rules[compiler.parser.current.type].method;
+  nextToken(compiler.parser);
+
+  if (signatureFn === null) {
+    error(compiler, "Expect method definition.");
+    return false;
+  }
+
+  // Build the method signature.
+  var signature = signatureFromToken(compiler, SignatureType.SIG_GETTER);
+  compiler.enclosingClass.signature = signature;
+
+  var methodCompiler;
+  initCompiler(methodCompiler, compiler.parser, compiler, false);
+
+  // Compile the method signature.
+  signatureFn(methodCompiler, signature);
+
+  if (compiler.enclosingClass.inStatic &&
+    signature.type === SignatureType.SIG_INITIALIZER) {
+    error(compiler, "A constructor cannot be static.");
+  }
+
+  // Include the full signature in debug messages in stack traces.
+  var fullSignature = [];
+  var length;
+  signatureToString(signature, fullSignature, length);
+
+  if (isForeign) {
+    // Define a constant for the signature.
+    emitConstant(compiler, wrenNewString(compiler.parser.vm,
+                                         fullSignature, length));
+
+    // We don't need the function we started compiling in the parameter list
+    // any more.
+    methodCompiler.parser.vm.compiler = methodCompiler.parent;
+  } else {
+    consume(compiler, TokenType.TOKEN_LEFT_BRACE, "Expect '{' to begin method body.");
+    finishBody(methodCompiler, signature.type == SignatureType.SIG_INITIALIZER);
+    endCompiler(methodCompiler, fullSignature, length);
+  }
+
+  // Define the method. For a constructor, this defines the instance
+  // initializer method.
+  var methodSymbol = signatureSymbol(compiler, signature);
+  defineMethod(compiler, classVariable, compiler.enclosingClass.inStatic,
+               methodSymbol);
+
+  if (signature.type == SignatureType.SIG_INITIALIZER) {
+    // Also define a matching constructor method on the metaclass.
+    signature.type = SignatureType.SIG_METHOD;
+    var constructorSymbol = signatureSymbol(compiler, signature);
+
+    createConstructor(compiler, signature, methodSymbol);
+    defineMethod(compiler, classVariable, true, constructorSymbol);
+  }
+
+  return true;
+}
+
+// Compiles a class definition. Assumes the "class" token has already been
+// consumed (along with a possibly preceding "foreign" token).
+function classDefinition(compiler, isForeign) {
+  // Create a variable to store the class in.
+  var classVariable;
+  classVariable.scope = compiler.scopeDepth == -1 ? SCOPE_MODULE : SCOPE_LOCAL;
+  classVariable.index = declareNamedVariable(compiler);
+
+  // Make a string constant for the name.
+  emitConstant(compiler, wrenNewString(compiler.parser.vm,
+      compiler.parser.previous.start, compiler.parser.previous.length));
+
+  // Load the superclass (if there is one).
+  if (match(compiler, TokenType.TOKEN_IS)) {
+    parsePrecedence(compiler, Precedence.PREC_CALL);
+  } else {
+    // Implicitly inherit from Object.
+    loadCoreVariable(compiler, "Object");
+  }
+
+  // Store a placeholder for the number of fields argument. We don't know
+  // the value until we've compiled all the methods to see which fields are
+  // used.
+  var numFieldsInstruction = -1;
+  if (isForeign) {
+    emitOp(compiler, CODE_FOREIGN_CLASS);
+  } else {
+    numFieldsInstruction = emitByteArg(compiler, CODE_CLASS, 255);
+  }
+
+  // Store it in its name.
+  defineVariable(compiler, classVariable.index);
+
+  // Push a local variable scope. Static fields in a class body are hoisted out
+  // into local variables declared in this scope. Methods that use them will
+  // have upvalues referencing them.
+  pushScope(compiler);
+
+  var classCompiler;
+  classCompiler.isForeign = isForeign;
+
+  // Set up a symbol table for the class's fields. We'll initially compile
+  // them to slots starting at zero. When the method is bound to the class, the
+  // bytecode will be adjusted by [wrenBindMethod] to take inherited fields
+  // into account.
+  wrenSymbolTableInit(classCompiler.fields);
+  compiler.enclosingClass = classCompiler;
+
+  // Compile the method definitions.
+  consume(compiler, TokenType.TOKEN_LEFT_BRACE, "Expect '{' after class declaration.");
+  matchLine(compiler);
+
+  while (!match(compiler, TokenType.TOKEN_RIGHT_BRACE)) {
+    if (!method(compiler, classVariable)) {
+      break;
+    }
+
+    // Don't require a newline after the last definition.
+    if (match(compiler, TokenType.TOKEN_RIGHT_BRACE)) {
+      break;
+    }
+
+    consumeLine(compiler, "Expect newline after definition in class.");
+  }
+
+  // Update the class with the number of fields.
+  if (!isForeign) {
+    compiler.fn.code.data[numFieldsInstruction] = classCompiler.fields.count;
+  }
+
+  wrenSymbolTableClear(compiler.parser.vm, classCompiler.fields);
+  compiler.enclosingClass = null;
+  popScope(compiler);
+}
+
+// Compiles an "import" statement.
+//
+// An import just desugars to calling a few special core methods. Given:
+//
+//     import "foo" for Bar, Baz
+//
+// We compile it to:
+//
+//     System.importModule("foo")
+//     var Bar = System.getModuleVariable("foo", "Bar")
+//     var Baz = System.getModuleVariable("foo", "Baz")
+function import_(compiler) {
+  ignoreNewlines(compiler);
+  consume(compiler, TokenType.TOKEN_STRING, "Expect a string after 'import'.");
+  var moduleConstant = addConstant(compiler, compiler.parser.previous.value);
+
+  // Load the module.
+  loadCoreVariable(compiler, "System");
+  emitShortArg(compiler, CODE_CONSTANT, moduleConstant);
+  callMethod(compiler, 1, "importModule(_)", 15);
+
+  // Discard the unused result value from calling the module's fiber.
+  emitOp(compiler, CODE_POP);
+
+  // The for clause is optional.
+  if (!match(compiler, TokenType.TOKEN_FOR)) {
+    return;
+  }
+
+  // Compile the comma-separated list of variables to import.
+  do
+  {
+    ignoreNewlines(compiler);
+    var slot = declareNamedVariable(compiler);
+
+    // Define a string constant for the variable name.
+    var variableConstant = addConstant(compiler,
+        wrenNewString(compiler.parser.vm,
+                      compiler.parser.previous.start,
+                      compiler.parser.previous.length));
+
+    // Load the variable from the other module.
+    loadCoreVariable(compiler, "System");
+    emitShortArg(compiler, CODE_CONSTANT, moduleConstant);
+    emitShortArg(compiler, CODE_CONSTANT, variableConstant);
+    callMethod(compiler, 2, "getModuleVariable(_,_)", 22);
+
+    // Store the result in the variable here.
+    defineVariable(compiler, slot);
+  } while (match(compiler, TokenType.TOKEN_COMMA));
+}
+
+// Compiles a "var" variable definition statement.
+function variableDefinition(compiler) {
+  // Grab its name, but don't declare it yet. A (local) variable shouldn't be
+  // in scope in its own initializer.
+  consume(compiler, TokenType.TOKEN_NAME, "Expect variable name.");
+  var nameToken = compiler.parser.previous;
+
+  // Compile the initializer.
+  if (match(compiler, TokenType.TOKEN_EQ)) {
+    expression(compiler);
+  } else {
+    // Default initialize it to null.
+    null_(compiler, false);
+  }
+
+  // Now put it in scope.
+  var symbol = declareVariable(compiler, nameToken);
+  defineVariable(compiler, symbol);
+}
+
+// Compiles a "definition". These are the statements that bind new variables.
+// They can only appear at the top level of a block and are prohibited in places
+// like the non-curly body of an if or while.
+function definition( compiler) {
+  if (match(compiler, TokenType.TOKEN_CLASS)) {
+    classDefinition(compiler, false);
+  } else if (match(compiler, TokenType.TOKEN_FOREIGN)) {
+    consume(compiler, TokenType.TOKEN_CLASS, "Expect 'class' after 'foreign'.");
+    classDefinition(compiler, true);
+  } else if (match(compiler, TokenType.TOKEN_IMPORT)) {
+    import_(compiler);
+  } else if (match(compiler, TokenType.TOKEN_VAR)) {
+    variableDefinition(compiler);
+  } else {
+    statement(compiler);
+  }
+}
+
+function wrenCompile(vm, module, source, printErrors) {
+  var parser;
+  parser.vm = vm;
+  parser.module = module;
+  parser.source = source;
+
+  parser.tokenStart = source;
+  parser.currentChar = source;
+  parser.currentLine = 1;
+  parser.numParens = 0;
+
+  // Zero-init the current token. This will get copied to previous when
+  // advance() is called below.
+  parser.current.type = TokenType.TOKEN_ERROR;
+  parser.current.start = source;
+  parser.current.length = 0;
+  parser.current.line = 0;
+  parser.current.value = UNDEFINED_VAL;
+
+  // Ignore leading newlines.
+  parser.skipNewlines = true;
+  parser.printErrors = printErrors;
+  parser.hasError = false;
+
+  // Read the first token.
+  nextToken(parser);
+
+  var compiler;
+  initCompiler(compiler, parser, null, true);
+  ignoreNewlines(compiler);
+
+  while (!match(compiler, TokenType.TOKEN_EOF)) {
+    definition(compiler);
+
+    // If there is no newline, it must be the end of the block on the same line.
+    if (!matchLine(compiler)) {
+      consume(compiler, TokenType.TOKEN_EOF, "Expect end of file.");
+      break;
+    }
+  }
+
+  emitOp(compiler, CODE_NULL);
+  emitOp(compiler, CODE_RETURN);
+
+  // See if there are any implicitly declared module-level variables that never
+  // got an explicit definition.
+  // TODO: It would be nice if the error was on the line where it was used.
+  for (var i = 0; i < parser.module.variables.count; i++) {
+    if (IS_UNDEFINED(parser.module.variables.data[i])) {
+      error(compiler, "Variable '%x' is used but not defined.",
+            parser.module.variableNames.data[i].buffer);
+    }
+  }
+
+  return endCompiler(compiler, "(script)", 8);
+}
+
+function wrenBindMethodCode(classObj, fn) {
+  var ip = 0;
+  for (;;) {
+    var instruction = fn.code.data[ip++];
+    switch (instruction) {
+      case CODE_LOAD_FIELD:
+      case CODE_STORE_FIELD:
+      case CODE_LOAD_FIELD_THIS:
+      case CODE_STORE_FIELD_THIS:
+        // Shift this class's fields down past the inherited ones. We don't
+        // check for overflow here because we'll see if the number of fields
+        // overflows when the subclass is created.
+        fn.code.data[ip++] += classObj.superclass.numFields;
+        break;
+
+      case CODE_SUPER_0:
+      case CODE_SUPER_1:
+      case CODE_SUPER_2:
+      case CODE_SUPER_3:
+      case CODE_SUPER_4:
+      case CODE_SUPER_5:
+      case CODE_SUPER_6:
+      case CODE_SUPER_7:
+      case CODE_SUPER_8:
+      case CODE_SUPER_9:
+      case CODE_SUPER_10:
+      case CODE_SUPER_11:
+      case CODE_SUPER_12:
+      case CODE_SUPER_13:
+      case CODE_SUPER_14:
+      case CODE_SUPER_15:
+      case CODE_SUPER_16: {
+        // Skip over the symbol.
+        ip += 2;
+
+        // Fill in the constant slot with a reference to the superclass.
+        var constant = (fn.code.data[ip] << 8) | fn.code.data[ip + 1];
+        fn.constants.data[constant] = OBJ_VAL(classObj.superclass);
+        break;
+      }
+
+      case CODE_CLOSURE: {
+        // Bind the nested closure too.
+        // JS lint complains because of the previous constant?
+        var constant2 = (fn.code.data[ip] << 8) | fn.code.data[ip + 1];
+        wrenBindMethodCode(classObj, AS_FN(fn.constants.data[constant2]));
+
+        ip += getNumArguments(fn.code.data, fn.constants.data, ip - 1);
+        break;
+      }
+
+      case CODE_END:
+        return;
+
+      default:
+        // Other instructions are unaffected, so just skip over them.
+        ip += getNumArguments(fn.code.data, fn.constants.data, ip - 1);
+        break;
+    }
+  }
+}
+
+function wrenMarkCompiler(vm, compiler) {
+  wrenGrayValue(vm, compiler.parser.current.value);
+  wrenGrayValue(vm, compiler.parser.previous.value);
+
+  // Walk up the parent chain to mark the outer compilers too. The VM only
+  // tracks the innermost one.
+  do {
+    wrenGrayObj(vm, compiler.fn);
+    compiler = compiler.parent;
+  } while (compiler !== null);
 }
