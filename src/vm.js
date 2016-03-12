@@ -6,6 +6,48 @@ var WREN_MAX_TEMP_ROOTS = 5;
 
 var Code = require('./opcodes.js');
 
+// Returns the class of [value].
+//
+// Defined here instead of in wren_value.h because it's critical that this be
+// inlined. That means it must be defined in the header, but the wren_value.h
+// header doesn't have a full definitely of WrenVM yet.
+function wrenGetClassInline(vm, value) {
+  if (IS_NUM(value)) {
+    return vm.numClass;
+  }
+  if (IS_OBJ(value)) {
+    return AS_OBJ(value).classObj;
+  }
+
+  if (WREN_NAN_TAGGING) {
+    switch (GET_TAG(value)) {
+      case TAG_FALSE:
+        return vm.boolClass;
+      case TAG_NAN:
+        return vm.numClass;
+      case TAG_NULL:
+        return vm.nullClass;
+      case TAG_TRUE:
+        return vm.boolClass;
+      case TAG_UNDEFINED:
+        UNREACHABLE();
+    }
+  } else {
+    switch (value.type)
+    {
+      case VAL_FALSE:     return vm.boolClass;
+      case VAL_NULL:      return vm.nullClass;
+      case VAL_NUM:       return vm.numClass;
+      case VAL_TRUE:      return vm.boolClass;
+      case VAL_OBJ:       return AS_OBJ(value).classObj;
+      case VAL_UNDEFINED: UNREACHABLE();
+    }
+  }
+
+    UNREACHABLE();
+    return null;
+}
+
 // The behavior of realloc() when the size is 0 is implementation defined. It
 // may return a non-NULL pointer which must not be dereferenced but nevertheless
 // should be freed. To prevent that, we avoid calling realloc() with a zero
@@ -21,10 +63,10 @@ function defaultReallocate(ptr, newSize) {
 
 function wrenInitConfiguration(config) {
   config.reallocateFn = defaultReallocate;
-  config.loadModuleFn = NULL;
-  config.bindForeignMethodFn = NULL;
-  config.bindForeignClassFn = NULL;
-  config.writeFn = NULL;
+  config.loadModuleFn = null;
+  config.bindForeignMethodFn = null;
+  config.bindForeignClassFn = null;
+  config.writeFn = null;
   config.initialHeapSize = 1024 * 1024 * 10;
   config.minHeapSize = 1024 * 1024;
   config.heapGrowthPercent = 50;
@@ -498,7 +540,7 @@ function bindForeignClass(vm, classObj, module) {
 
   // Add the symbol even if there is no finalizer so we can ensure that the
   // symbol itself is always in the symbol table.
-  int symbol = wrenSymbolTableEnsure(vm, vm.methodNames, "<allocate>", 10);
+  var symbol = wrenSymbolTableEnsure(vm, vm.methodNames, "<allocate>", 10);
   if (methods.allocate !== null)
   {
     method.fn.foreign = methods.allocate;
@@ -1506,5 +1548,72 @@ function wrenGetVariable(vm, module, name, slot) {
 ////////////////////////////////////////////////////////////////////////////////
 // Adding properties to this object will make them available to outside scripts.
 module.exports = {
-  Code: Code
+  Code: Code,
+
+  // A generic allocation function that handles all explicit memory management.
+  // It's used like so:
+  //
+  // - To allocate new memory, [memory] is NULL and [oldSize] is zero. It should
+  //   return the allocated memory or NULL on failure.
+  //
+  // - To attempt to grow an existing allocation, [memory] is the memory,
+  //   [oldSize] is its previous size, and [newSize] is the desired size.
+  //   It should return [memory] if it was able to grow it in place, or a new
+  //   pointer if it had to move it.
+  //
+  // - To shrink memory, [memory], [oldSize], and [newSize] are the same as above
+  //   but it will always return [memory].
+  //
+  // - To free memory, [memory] will be the memory to free and [newSize] and
+  //   [oldSize] will be zero. It should return NULL.
+  wrenReallocate: wrenReallocate,
+
+  // Invoke the finalizer for the foreign object referenced by [foreign].
+  wrenFinalizeForeign: wrenFinalizeForeign,
+
+  // Creates a new [WrenValue] for [value].
+  wrenCaptureValue: wrenCaptureValue,
+
+  // Executes [source] in the context of [module].
+  wrenInterpretInModule: wrenInterpretInModule,
+
+  // Imports the module with [name], a string.
+  //
+  // If the module has already been imported (or is already in the middle of
+  // being imported, in the case of a circular import), returns null. Otherwise,
+  // returns a new fiber that will execute the module's code. That fiber should
+  // be called before any variables are loaded from the module.
+  //
+  // If the module could not be found, sets an error in the current fiber.
+  wrenImportModule: wrenImportModule,
+
+  // Looks up a variable from a previously-loaded module.
+  //
+  // Aborts the current fiber if the module or variable could not be found.
+  wrenGetModuleVariable: wrenGetModuleVariable,
+
+  // Returns the value of the module-level variable named [name] in the main
+  // module.
+  wrenFindVariable: wrenFindVariable,
+
+  // Adds a new implicitly declared top-level variable named [name] to [module].
+  //
+  // Does not check to see if a variable with that name is already declared or
+  // defined. Returns the symbol for the new variable or -2 if there are too many
+  // variables defined.
+  wrenDeclareVariable: wrenDeclareVariable,
+
+  // Adds a new top-level variable named [name] to [module].
+  //
+  // Returns the symbol for the new variable, -1 if a variable with the given name
+  // is already defined, or -2 if there are too many variables defined.
+  wrenDefineVariable: wrenDefineVariable,
+
+  // Mark [obj] as a GC root so that it doesn't get collected.
+  wrenPushRoot: wrenPushRoot,
+
+  // Remove the most recently pushed temporary root.
+  wrenPopRoot: wrenPopRoot,
+
+  wrenGetClassInline: wrenGetClassInline
 };

@@ -1,5 +1,5 @@
 module.exports = {
-  entry: "./src/common.js",
+  entry: "./src/wren.js",
   devtool: 'source-map',
   output: {
     library: "Wren",

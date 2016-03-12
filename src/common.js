@@ -1,1 +1,0 @@
-this.compiler = require('./compiler');
