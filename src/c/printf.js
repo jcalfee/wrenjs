@@ -3,13 +3,13 @@
 function printf(format) {
   var string = format;
 
-  arguments.forEach(function(arg, i, args) {
+  for (var i = 0 ; i< arguments.length; i++) {
     if (i > 0) {
-      string = string.replace("%x", arg);
+      string = string.replace("%x", arguments[i]);
     }
-  });
+  }
 
   return string;
 }
 
-module.exports.printf = printf;
+module.exports = printf;

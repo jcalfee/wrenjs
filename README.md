@@ -10,4 +10,4 @@ This branch will contain a hand-written JavaScript port of the wren VM.
         ENUM_2: 1
       };
 
-- The content of C header files should be expressed in the `module.exports` object at the top of each file.
+- The content of C header files should be expressed in the `module.exports` object at the bottom of each file.

@@ -4,7 +4,6 @@ module.exports = {
   output: {
     library: "Wren",
     path: __dirname + '/out',
-    filename: "wren.js",
-    devtoolLineToLine: true
+    filename: "wren.js"
   }
 };

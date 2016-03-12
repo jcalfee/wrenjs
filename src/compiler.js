@@ -1,5 +1,10 @@
-var printf = require('./c/printf');
 module.value = require('./value');
+module.vm = require('./vm');
+
+var printf = require('./c/printf');
+
+// Code enum from opcodes.js via vm.js
+var Code = module.vm.Code;
 
 // This module defines the compiler for Wren. It takes a string of source code
 // and lexes, parses, and compiles it. Wren uses a single-pass compiler. It
@@ -17,38 +22,6 @@ module.value = require('./value');
 // Compilation is also faster since we don't create a bunch of temporary data
 // structures and destroy them after generating code.
 
-// Adding properties to this object will make them available to outside scripts.
-module.exports = {
-  sCompiler: sCompiler,
-
-  // Compiles [source], a string of Wren source code located in [module], to an
-  // [ObjFn] that will execute that code when invoked. Returns `null` if the
-  // source contains any syntax errors.
-  //
-  // If [printErrors] is `true`, any compile errors are output to stderr.
-  // Otherwise, they are silently discarded.
-  wrenCompile: wrenCompile,
-
-  // When a class is defined, its superclass is not known until runtime since
-  // class definitions are just imperative statements. Most of the bytecode for a
-  // a method doesn't care, but there are two places where it matters:
-  //
-  //   - To load or store a field, we need to know the index of the field in the
-  //     instance's field array. We need to adjust this so that subclass fields
-  //     are positioned after superclass fields, and we don't know this until the
-  //     superclass is known.
-  //
-  //   - Superclass calls need to know which superclass to dispatch to.
-  //
-  // We could handle this dynamically, but that adds overhead. Instead, when a
-  // method is bound, we walk the bytecode for the function and patch it up.
-  wrenBindMethodCode: wrenBindMethodCode,
-
-  // Reaches all of the heap-allocated objects in use by [compiler] (and all of
-  // its parents) so that they are not collected by the GC.
-  wrenMarkCompiler: wrenMarkCompiler
-};
-
 // This is written in bottom-up order, so the tokenization comes first, then
 // parsing/code generation. This minimizes the number of explicit forward
 // declarations needed.
@@ -58,7 +31,7 @@ module.exports = {
 // the maximum number of variables in scope at one time, and spans block scopes.
 //
 // Note that this limitation is also explicit in the bytecode. Since
-// `CODE_LOAD_LOCAL` and `CODE_STORE_LOCAL` use a single argument byte to
+// `Code.LOAD_LOCAL` and `Code.STORE_LOCAL` use a single argument byte to
 // identify the local, only 256 can be in scope at one time.
 var MAX_LOCALS = 256;
 
@@ -67,11 +40,11 @@ var MAX_LOCALS = 256;
 var MAX_UPVALUES = 256;
 
 // The maximum number of distinct constants that a function can contain. This
-// value is explicit in the bytecode since `CODE_CONSTANT` only takes a single
+// value is explicit in the bytecode since `Code.CONSTANT` only takes a single
 // two-byte argument.
 var MAX_CONSTANTS = (1 << 16);
 
-// The maximum distance a CODE_JUMP or CODE_JUMP_IF instruction can move the
+// The maximum distance a Code.JUMP or Code.JUMP_IF instruction can move the
 // instruction pointer.
 var MAX_JUMP = (1 << 16);
 
@@ -165,6 +138,8 @@ var TokenType = {
   TOKEN_EOF: 61
 };
 
+/*
+// Format of a Token
 var Token = {
   type: null,
 
@@ -178,59 +153,66 @@ var Token = {
   line: null,
 
   // The parsed value if the token is a literal.
-  value: null
+  value: null,
+};
+*/
+
+// Creates a Parser object literal
+var Parser = function () {
+  return {
+    vm: null,
+
+    // The module being parsed.
+    module: null,
+
+    // The source code being parsed.
+    source: null,
+
+    // The beginning of the currently-being-lexed token in [source].
+    tokenStart: null,
+
+    // The current character being lexed in [source].
+    currentChar: null,
+
+    // The 1-based line number of [currentChar].
+    currentLine: null,
+
+    // The most recently lexed token.
+    current: {},
+
+    // The most recently consumed/advanced token.
+    previous: {},
+
+    // Tracks the lexing state when tokenizing interpolated strings.
+    //
+    // Interpolated strings make the lexer not strictly regular: we don't know
+    // whether a ")" should be treated as a RIGHT_PAREN token or as ending an
+    // interpolated expression unless we know whether we are inside a string
+    // interpolation and how many unmatched "(" there are. This is particularly
+    // complex because interpolation can nest:
+    //
+    //     " %( " %( inner ) " ) "
+    //
+    // This tracks that state. The parser maintains a stack of ints, one for each
+    // level of current interpolation nesting. Each value is the number of
+    // unmatched "(" that are waiting to be closed.
+    parens: [],
+    numParens: null,
+
+    // If subsequent newline tokens should be discarded.
+    skipNewlines: null,
+
+    // Whether compile errors should be printed to stderr or discarded.
+    printErrors: null,
+
+    // If a syntax or compile error has occurred.
+    hasError: null
+  };
 };
 
-var Parser = {
-  vm: null,
 
-  // The module being parsed.
-  module: null,
-
-  // The source code being parsed.
-  source: null,
-
-  // The beginning of the currently-being-lexed token in [source].
-  tokenStart: null,
-
-  // The current character being lexed in [source].
-  currentChar: null,
-
-  // The 1-based line number of [currentChar].
-  currentLine: null,
-
-  // The most recently lexed token.
-  current: null,
-
-  // The most recently consumed/advanced token.
-  previous: null,
-
-  // Tracks the lexing state when tokenizing interpolated strings.
-  //
-  // Interpolated strings make the lexer not strictly regular: we don't know
-  // whether a ")" should be treated as a RIGHT_PAREN token or as ending an
-  // interpolated expression unless we know whether we are inside a string
-  // interpolation and how many unmatched "(" there are. This is particularly
-  // complex because interpolation can nest:
-  //
-  //     " %( " %( inner ) " ) "
-  //
-  // This tracks that state. The parser maintains a stack of ints, one for each
-  // level of current interpolation nesting. Each value is the number of
-  // unmatched "(" that are waiting to be closed.
-  parens: [],
-  numParens: null,
-
-  // If subsequent newline tokens should be discarded.
-  skipNewlines: null,
-
-  // Whether compile errors should be printed to stderr or discarded.
-  printErrors: null,
-
-  // If a syntax or compile error has occurred.
-  hasError: null
-};
-
+/*
+// Format of a Local
 var Local = {
   // The name of the local variable. This points directly into the original
   // source code string.
@@ -247,7 +229,10 @@ var Local = {
   // If this local variable is being used as an upvalue.
   isUpvalue: null
 };
+*/
 
+/*
+// Format of a CompilerUpvalue
 var CompilerUpvalue = {
   // True if this upvalue is capturing a local variable from the enclosing
   // function. False if it's capturing an upvalue.
@@ -256,13 +241,15 @@ var CompilerUpvalue = {
   // The index of the local or upvalue being captured in the enclosing function.
   index: null
 };
+*/
 
+/*
 // Bookkeeping information for the current loop being compiled.
 var Loop = {
   // Index of the instruction that the loop should jump back to.
   start: null,
 
-  // Index of the argument for the CODE_JUMP_IF instruction used to exit the
+  // Index of the argument for the Code.JUMP_IF instruction used to exit the
   // loop. Stored so we can patch it once we know where the loop ends.
   exitJump: null,
 
@@ -276,6 +263,7 @@ var Loop = {
   // The loop enclosing this one, or null if this is the outermost loop.
   enclosing: null
 };
+*/
 
 // The different signature syntaxes for different kinds of methods.
 var SignatureType = {
@@ -301,13 +289,16 @@ var SignatureType = {
   SIG_INITIALIZER: 5
 };
 
+/*
 var Signature = {
   name: null,
   length: null,
   type: null,
   arity: null
 };
+*/
 
+/*
 // Bookkeeping information for compiling a class definition.
 var ClassCompiler = {
   // Symbol table for the fields of the class.
@@ -322,6 +313,7 @@ var ClassCompiler = {
   // The signature of the method being compiled.
   signature: null
 };
+*/
 
 var sCompiler = {
   parser: null,
@@ -379,6 +371,7 @@ var Scope = {
   SCOPE_MODULE: 2
 };
 
+/*
 // A reference to a variable and the scope where it is defined. This contains
 // enough information to emit correct code to load or store the variable.
 var Variable = {
@@ -388,6 +381,7 @@ var Variable = {
   // Where the variable is declared.
   scope: null
 };
+*/
 
 // The stack effect of each opcode. The index in the array is the opcode, and
 // the value is the stack effect of that instruction.
@@ -450,7 +444,7 @@ function error(compiler, format) {
   } else if (token.type === TokenType.TOKEN_EOF) {
     err += printf("end of file: ");
   } else {
-    err += printf("'%x': ", token.length, token.start);
+    err += printf("'%x': ", token.length); // See wren_compiler.c line 428
   }
 
   arguments.forEach(function(arg, i, args) {
@@ -823,8 +817,8 @@ function readUnicodeEscape(parser, string, length) {
 
 // Finishes lexing a string literal.
 function readString(parser) {
-  var string;
-  type = TokenType.TOKEN_STRING;
+  var string = [];
+  var type = TokenType.TOKEN_STRING;
   wrenByteBufferInit(string);
 
   for (;;) {
@@ -1154,7 +1148,7 @@ function emitConstant(compiler, value) {
   var constant = addConstant(compiler, value);
 
   // Compile the code to load the constant.
-  emitShortArg(compiler, CODE_CONSTANT, constant);
+  emitShortArg(compiler, Code.CONSTANT, constant);
 }
 
 // Create a new local variable with [name]. Assumes the current scope is local
@@ -1236,8 +1230,8 @@ function defineVariable(compiler, symbol) {
 
   // It's a module-level variable, so store the value in the module slot and
   // then discard the temporary for the initializer.
-  emitShortArg(compiler, CODE_STORE_MODULE_VAR, symbol);
-  emitOp(compiler, CODE_POP);
+  emitShortArg(compiler, Code.STORE_MODULE_VAR, symbol);
+  emitOp(compiler, Code.POP);
 }
 
 // Starts a new local block scope.
@@ -1262,9 +1256,9 @@ function discardLocals(compiler, depth) {
     // because we don't want to track that stack effect of these pops since the
     // variables are still in scope after the break.
     if (compiler.locals[local].isUpvalue) {
-      emitByte(compiler, CODE_CLOSE_UPVALUE);
+      emitByte(compiler, Code.CLOSE_UPVALUE);
     } else {
-      emitByte(compiler, CODE_POP);
+      emitByte(compiler, Code.POP);
     }
 
     local--;
@@ -1370,12 +1364,12 @@ function findUpvalue(compiler, name, length) {
 function resolveNonmodule(compiler, name, length) {
   // Look it up in the local scopes.
   var variable;
-  variable.scope = SCOPE_LOCAL;
+  variable.scope = Scope.SCOPE_LOCAL;
   variable.index = resolveLocal(compiler, name, length);
   if (variable.index !== -1) return variable;
 
   // It's not a local, so guess that it's an upvalue.
-  variable.scope = SCOPE_UPVALUE;
+  variable.scope = Scope.SCOPE_UPVALUE;
   variable.index = findUpvalue(compiler, name, length);
   return variable;
 }
@@ -1389,7 +1383,7 @@ function resolveName(compiler, name, length) {
     return variable;
   }
 
-  variable.scope = SCOPE_MODULE;
+  variable.scope = Scope.SCOPE_MODULE;
   variable.index = wrenSymbolTableFind(compiler.parser.module.variableNames,
                                        name, length);
   return variable;
@@ -1397,11 +1391,11 @@ function resolveName(compiler, name, length) {
 
 function loadLocal(compiler, slot) {
   if (slot <= 8) {
-    emitOp(compiler, (CODE_LOAD_LOCAL_0 + slot));
+    emitOp(compiler, (Code.LOAD_LOCAL_0 + slot));
     return;
   }
 
-  emitByteArg(compiler, CODE_LOAD_LOCAL, slot);
+  emitByteArg(compiler, Code.LOAD_LOCAL, slot);
 }
 
 // Finishes [compiler], which is compiling a function, method, or chunk of top
@@ -1415,8 +1409,8 @@ function endCompiler(compiler, debugName, debugNameLength) {
   }
 
   // Mark the end of the bytecode. Since it may contain multiple early returns,
-  // we can't rely on CODE_RETURN to tell us we're at the end.
-  emitOp(compiler, CODE_END);
+  // we can't rely on Code.RETURN to tell us we're at the end.
+  emitOp(compiler, Code.END);
 
   wrenFunctionBindName(compiler.parser.vm, compiler.fn,
                        debugName, debugNameLength);
@@ -1428,10 +1422,10 @@ function endCompiler(compiler, debugName, debugNameLength) {
     // If the function has no upvalues, we don't need to create a closure.
     // We can just load and run the function directly.
     if (compiler.fn.numUpvalues === 0) {
-      emitShortArg(compiler.parent, CODE_CONSTANT, constant);
+      emitShortArg(compiler.parent, Code.CONSTANT, constant);
     } else {
       // Capture the upvalues in the new closure object.
-      emitShortArg(compiler.parent, CODE_CLOSURE, constant);
+      emitShortArg(compiler.parent, Code.CLOSURE, constant);
 
       // Emit arguments for each upvalue to know whether to capture a local or
       // an upvalue.
@@ -1491,7 +1485,7 @@ function statement(compiler) {}
 function definition(compiler) {}
 function parsePrecedence(compiler, precedence) {}
 
-// Replaces the placeholder argument for a previous CODE_JUMP or CODE_JUMP_IF
+// Replaces the placeholder argument for a previous Code.JUMP or Code.JUMP_IF
 // instruction with an offset that jumps to the current end of bytecode.
 function patchJump(compiler, offset) {
   // -2 to adjust for the bytecode for the jump offset itself.
@@ -1549,17 +1543,17 @@ function finishBody(compiler, isInitializer) {
   if (isInitializer) {
     // If the initializer body evaluates to a value, discard it.
     if (isExpressionBody) {
-      emitOp(compiler, CODE_POP);
+      emitOp(compiler, Code.POP);
     }
 
     // The receiver is always stored in the first local slot.
-    emitOp(compiler, CODE_LOAD_LOCAL_0);
+    emitOp(compiler, Code.LOAD_LOCAL_0);
   } else if (!isExpressionBody) {
     // Implicitly return null in statement bodies.
-    emitOp(compiler, CODE_NULL);
+    emitOp(compiler, Code.NULL);
   }
 
-  emitOp(compiler, CODE_RETURN);
+  emitOp(compiler, Code.RETURN);
 }
 
 // The VM can only handle a certain number of parameters, so check that we
@@ -1695,7 +1689,7 @@ function callSignature(compiler, instruction, signature) {
   var symbol = signatureSymbol(compiler, signature);
   emitShortArg(compiler, instruction + signature.arity, symbol);
 
-  if (instruction === CODE_SUPER_0) {
+  if (instruction === Code.SUPER_0) {
     // Super calls need to be statically bound to the class's superclass. This
     // ensures we call the right method even when a method containing a super
     // call is inherited by another subclass.
@@ -1711,7 +1705,7 @@ function callSignature(compiler, instruction, signature) {
 // Compiles a method call with [numArgs] for a method with [name] with [length].
 function callMethod(compiler, numArgs, name, length) {
   var symbol = methodSymbol(compiler, name, length);
-  emitShortArg(compiler, CODE_CALL_0 + numArgs, symbol);
+  emitShortArg(compiler, Code.CALL_0 + numArgs, symbol);
 }
 
 // Compiles an (optional) argument list for a method call with [methodSignature]
@@ -1812,14 +1806,14 @@ function namedCall(compiler, canAssign, instruction) {
 // Emits the code to load [variable] onto the stack.
 function loadVariable(compiler, variable) {
   switch (variable.scope) {
-    case SCOPE_LOCAL:
+    case Scope.SCOPE_LOCAL:
       loadLocal(compiler, variable.index);
       break;
-    case SCOPE_UPVALUE:
-      emitByteArg(compiler, CODE_LOAD_UPVALUE, variable.index);
+    case Scope.SCOPE_UPVALUE:
+      emitByteArg(compiler, Code.LOAD_UPVALUE, variable.index);
       break;
-    case SCOPE_MODULE:
-      emitShortArg(compiler, CODE_LOAD_MODULE_VAR, variable.index);
+    case Scope.SCOPE_MODULE:
+      emitShortArg(compiler, Code.LOAD_MODULE_VAR, variable.index);
       break;
     default:
       UNREACHABLE();
@@ -1837,7 +1831,7 @@ function loadCoreVariable(compiler, name) {
   var symbol = wrenSymbolTableFind(compiler.parser.module.variableNames,
                                    name, strlen(name));
   assert(symbol !== -1, "Should have already defined core name.");
-  emitShortArg(compiler, CODE_LOAD_MODULE_VAR, symbol);
+  emitShortArg(compiler, Code.LOAD_MODULE_VAR, symbol);
 }
 
 // A parenthesized expression.
@@ -1916,7 +1910,7 @@ function unaryOp(compiler, canAssign) {
 
 function boolean(compiler, canAssign) {
   emitOp(compiler,
-      compiler.parser.previous.type === TokenType.TOKEN_FALSE ? CODE_FALSE : CODE_TRUE);
+      compiler.parser.previous.type === TokenType.TOKEN_FALSE ? Code.FALSE : Code.TRUE);
 }
 
 // Walks the compiler chain to find the compiler for the nearest class
@@ -1974,11 +1968,11 @@ function field(compiler, canAssign) {
   // If we're directly inside a method, use a more optimal instruction.
   if (compiler.parent !== null &&
       compiler.parent.enclosingClass === enclosingClass) {
-    emitByteArg(compiler, isLoad ? CODE_LOAD_FIELD_THIS : CODE_STORE_FIELD_THIS,
+    emitByteArg(compiler, isLoad ? Code.LOAD_FIELD_THIS : Code.STORE_FIELD_THIS,
                 field);
   } else {
     loadThis(compiler);
-    emitByteArg(compiler, isLoad ? CODE_LOAD_FIELD : CODE_STORE_FIELD, field);
+    emitByteArg(compiler, isLoad ? Code.LOAD_FIELD : Code.STORE_FIELD, field);
   }
 }
 
@@ -1991,14 +1985,14 @@ function bareName(compiler, canAssign, variable) {
 
     // Emit the store instruction.
     switch (variable.scope) {
-      case SCOPE_LOCAL:
-        emitByteArg(compiler, CODE_STORE_LOCAL, variable.index);
+      case Scope.SCOPE_LOCAL:
+        emitByteArg(compiler, Code.STORE_LOCAL, variable.index);
         break;
-      case SCOPE_UPVALUE:
-        emitByteArg(compiler, CODE_STORE_UPVALUE, variable.index);
+      case Scope.SCOPE_UPVALUE:
+        emitByteArg(compiler, Code.STORE_UPVALUE, variable.index);
         break;
-      case SCOPE_MODULE:
-        emitShortArg(compiler, CODE_STORE_MODULE_VAR, variable.index);
+      case Scope.SCOPE_MODULE:
+        emitShortArg(compiler, Code.STORE_MODULE_VAR, variable.index);
         break;
       default:
         UNREACHABLE();
@@ -2026,7 +2020,7 @@ function staticField(compiler, canAssign) {
     var symbol = declareVariable(classCompiler, null);
 
     // Implicitly initialize it to null.
-    emitOp(classCompiler, CODE_NULL);
+    emitOp(classCompiler, Code.NULL);
     defineVariable(classCompiler, symbol);
   }
 
@@ -2066,12 +2060,12 @@ function name(compiler, canAssign) {
   // on this.
   if (isLocalName(token.start) && getEnclosingClass(compiler) !== null) {
     loadThis(compiler);
-    namedCall(compiler, canAssign, CODE_CALL_0);
+    namedCall(compiler, canAssign, Code.CALL_0);
     return;
   }
 
   // Otherwise, look for a module-level variable with the name.
-  variable.scope = SCOPE_MODULE;
+  variable.scope = Scope.SCOPE_MODULE;
   variable.index = wrenSymbolTableFind(compiler.parser.module.variableNames,
                                        token.start, token.length);
   if (variable.index === -1)
@@ -2097,7 +2091,7 @@ function name(compiler, canAssign) {
 }
 
 function null_(compiler, canAssign) {
-  emitOp(compiler, CODE_NULL);
+  emitOp(compiler, Code.NULL);
 }
 
 // A number or string literal.
@@ -2159,12 +2153,12 @@ function super_(compiler, canAssign) {
   if (match(compiler, TokenType.TOKEN_DOT)) {
     // Compile the superclass call.
     consume(compiler, TokenType.TOKEN_NAME, "Expect method name after 'super.'.");
-    namedCall(compiler, canAssign, CODE_SUPER_0);
+    namedCall(compiler, canAssign, Code.SUPER_0);
   } else if (enclosingClass !== null) {
     // No explicit name, so use the name of the enclosing method. Make sure we
     // check that enclosingClass isn't null first. We've already reported the
     // error, but we don't want to crash here.
-    methodCall(compiler, CODE_SUPER_0, enclosingClass.signature);
+    methodCall(compiler, Code.SUPER_0, enclosingClass.signature);
   }
 }
 
@@ -2198,20 +2192,20 @@ function subscript(compiler, canAssign) {
     expression(compiler);
   }
 
-  callSignature(compiler, CODE_CALL_0, signature);
+  callSignature(compiler, Code.CALL_0, signature);
 }
 
 function call(compiler, canAssign) {
   ignoreNewlines(compiler);
   consume(compiler, TokenType.TOKEN_NAME, "Expect method name after '.'.");
-  namedCall(compiler, canAssign, CODE_CALL_0);
+  namedCall(compiler, canAssign, Code.CALL_0);
 }
 
 function and_(compiler, canAssign) {
   ignoreNewlines(compiler);
 
   // Skip the right argument if the left is false.
-  var jump = emitJump(compiler, CODE_AND);
+  var jump = emitJump(compiler, Code.AND);
   parsePrecedence(compiler, Precedence.PREC_LOGICAL_AND);
   patchJump(compiler, jump);
 }
@@ -2220,7 +2214,7 @@ function or_(compiler, canAssign) {
   ignoreNewlines(compiler);
 
   // Skip the right argument if the left is true.
-  var jump = emitJump(compiler, CODE_OR);
+  var jump = emitJump(compiler, Code.OR);
   parsePrecedence(compiler, Precedence.PREC_LOGICAL_OR);
   patchJump(compiler, jump);
 }
@@ -2230,7 +2224,7 @@ function conditional(compiler, canAssign) {
   ignoreNewlines(compiler);
 
   // Jump to the else branch if the condition is false.
-  var ifJump = emitJump(compiler, CODE_JUMP_IF);
+  var ifJump = emitJump(compiler, Code.JUMP_IF);
 
   // Compile the then branch.
   parsePrecedence(compiler, Precedence.PREC_CONDITIONAL);
@@ -2240,7 +2234,7 @@ function conditional(compiler, canAssign) {
   ignoreNewlines(compiler);
 
   // Jump over the else branch when the if branch is taken.
-  var elseJump = emitJump(compiler, CODE_JUMP);
+  var elseJump = emitJump(compiler, Code.JUMP);
 
   // Compile the else branch.
   patchJump(compiler, ifJump);
@@ -2267,7 +2261,7 @@ function infixOp(compiler, canAssign) {
     type: SignatureType.SIG_METHOD,
     arity: 1
   };
-  callSignature(compiler, CODE_CALL_0, signature);
+  callSignature(compiler, Code.CALL_0, signature);
 }
 
 // Compiles a method signature for an infix operator.
@@ -2516,7 +2510,7 @@ var rules = [
   /* TOKEN_IF            */ UNUSED(),
   /* TOKEN_IMPORT        */ UNUSED(),
   /* TOKEN_IN            */ UNUSED(),
-  /* TOKEN_IS            */ INFIX_OPERATOR(PREC_IS, "is"),
+  /* TOKEN_IS            */ INFIX_OPERATOR(Precedence.PREC_IS, "is"),
   /* TOKEN_NULL          */ PREFIX(null_),
   /* TOKEN_RETURN        */ UNUSED(),
   /* TOKEN_STATIC        */ UNUSED(),
@@ -2585,88 +2579,88 @@ function expression(compiler) {
 function getNumArguments(bytecode, constants, ip) {
   var instruction = bytecode[ip];
   switch (instruction) {
-    case CODE_NULL:
-    case CODE_FALSE:
-    case CODE_TRUE:
-    case CODE_POP:
-    case CODE_DUP:
-    case CODE_CLOSE_UPVALUE:
-    case CODE_RETURN:
-    case CODE_END:
-    case CODE_LOAD_LOCAL_0:
-    case CODE_LOAD_LOCAL_1:
-    case CODE_LOAD_LOCAL_2:
-    case CODE_LOAD_LOCAL_3:
-    case CODE_LOAD_LOCAL_4:
-    case CODE_LOAD_LOCAL_5:
-    case CODE_LOAD_LOCAL_6:
-    case CODE_LOAD_LOCAL_7:
-    case CODE_LOAD_LOCAL_8:
-    case CODE_CONSTRUCT:
-    case CODE_FOREIGN_CONSTRUCT:
-    case CODE_FOREIGN_CLASS:
+    case Code.NULL:
+    case Code.FALSE:
+    case Code.TRUE:
+    case Code.POP:
+    case Code.DUP:
+    case Code.CLOSE_UPVALUE:
+    case Code.RETURN:
+    case Code.END:
+    case Code.LOAD_LOCAL_0:
+    case Code.LOAD_LOCAL_1:
+    case Code.LOAD_LOCAL_2:
+    case Code.LOAD_LOCAL_3:
+    case Code.LOAD_LOCAL_4:
+    case Code.LOAD_LOCAL_5:
+    case Code.LOAD_LOCAL_6:
+    case Code.LOAD_LOCAL_7:
+    case Code.LOAD_LOCAL_8:
+    case Code.CONSTRUCT:
+    case Code.FOREIGN_CONSTRUCT:
+    case Code.FOREIGN_CLASS:
       return 0;
 
-    case CODE_LOAD_LOCAL:
-    case CODE_STORE_LOCAL:
-    case CODE_LOAD_UPVALUE:
-    case CODE_STORE_UPVALUE:
-    case CODE_LOAD_FIELD_THIS:
-    case CODE_STORE_FIELD_THIS:
-    case CODE_LOAD_FIELD:
-    case CODE_STORE_FIELD:
-    case CODE_CLASS:
+    case Code.LOAD_LOCAL:
+    case Code.STORE_LOCAL:
+    case Code.LOAD_UPVALUE:
+    case Code.STORE_UPVALUE:
+    case Code.LOAD_FIELD_THIS:
+    case Code.STORE_FIELD_THIS:
+    case Code.LOAD_FIELD:
+    case Code.STORE_FIELD:
+    case Code.CLASS:
       return 1;
 
-    case CODE_CONSTANT:
-    case CODE_LOAD_MODULE_VAR:
-    case CODE_STORE_MODULE_VAR:
-    case CODE_CALL_0:
-    case CODE_CALL_1:
-    case CODE_CALL_2:
-    case CODE_CALL_3:
-    case CODE_CALL_4:
-    case CODE_CALL_5:
-    case CODE_CALL_6:
-    case CODE_CALL_7:
-    case CODE_CALL_8:
-    case CODE_CALL_9:
-    case CODE_CALL_10:
-    case CODE_CALL_11:
-    case CODE_CALL_12:
-    case CODE_CALL_13:
-    case CODE_CALL_14:
-    case CODE_CALL_15:
-    case CODE_CALL_16:
-    case CODE_JUMP:
-    case CODE_LOOP:
-    case CODE_JUMP_IF:
-    case CODE_AND:
-    case CODE_OR:
-    case CODE_METHOD_INSTANCE:
-    case CODE_METHOD_STATIC:
+    case Code.CONSTANT:
+    case Code.LOAD_MODULE_VAR:
+    case Code.STORE_MODULE_VAR:
+    case Code.CALL_0:
+    case Code.CALL_1:
+    case Code.CALL_2:
+    case Code.CALL_3:
+    case Code.CALL_4:
+    case Code.CALL_5:
+    case Code.CALL_6:
+    case Code.CALL_7:
+    case Code.CALL_8:
+    case Code.CALL_9:
+    case Code.CALL_10:
+    case Code.CALL_11:
+    case Code.CALL_12:
+    case Code.CALL_13:
+    case Code.CALL_14:
+    case Code.CALL_15:
+    case Code.CALL_16:
+    case Code.JUMP:
+    case Code.LOOP:
+    case Code.JUMP_IF:
+    case Code.AND:
+    case Code.OR:
+    case Code.METHOD_INSTANCE:
+    case Code.METHOD_STATIC:
       return 2;
 
-    case CODE_SUPER_0:
-    case CODE_SUPER_1:
-    case CODE_SUPER_2:
-    case CODE_SUPER_3:
-    case CODE_SUPER_4:
-    case CODE_SUPER_5:
-    case CODE_SUPER_6:
-    case CODE_SUPER_7:
-    case CODE_SUPER_8:
-    case CODE_SUPER_9:
-    case CODE_SUPER_10:
-    case CODE_SUPER_11:
-    case CODE_SUPER_12:
-    case CODE_SUPER_13:
-    case CODE_SUPER_14:
-    case CODE_SUPER_15:
-    case CODE_SUPER_16:
+    case Code.SUPER_0:
+    case Code.SUPER_1:
+    case Code.SUPER_2:
+    case Code.SUPER_3:
+    case Code.SUPER_4:
+    case Code.SUPER_5:
+    case Code.SUPER_6:
+    case Code.SUPER_7:
+    case Code.SUPER_8:
+    case Code.SUPER_9:
+    case Code.SUPER_10:
+    case Code.SUPER_11:
+    case Code.SUPER_12:
+    case Code.SUPER_13:
+    case Code.SUPER_14:
+    case Code.SUPER_15:
+    case Code.SUPER_16:
       return 4;
 
-    case CODE_CLOSURE: {
+    case Code.CLOSURE: {
       var constant = (bytecode[ip + 1] << 8) | bytecode[ip + 2];
       var loadedFn = AS_FN(constants[constant]);
 
@@ -2689,11 +2683,11 @@ function startLoop(compiler, loop) {
   compiler.loop = loop;
 }
 
-// Emits the [CODE_JUMP_IF] instruction used to test the loop condition and
+// Emits the [Code.JUMP_IF] instruction used to test the loop condition and
 // potentially exit the loop. Keeps track of the instruction so we can patch it
 // later once we know where the end of the body is.
 function testExitLoop(compiler) {
-  compiler.loop.exitJump = emitJump(compiler, CODE_JUMP_IF);
+  compiler.loop.exitJump = emitJump(compiler, Code.JUMP_IF);
 }
 
 // Compiles the body of the loop and tracks its extent so that contained "break"
@@ -2709,16 +2703,16 @@ function endLoop(compiler) {
   // We don't check for overflow here since the forward jump over the loop body
   // will report an error for the same problem.
   var loopOffset = compiler.fn.code.count - compiler.loop.start + 2;
-  emitShortArg(compiler, CODE_LOOP, loopOffset);
+  emitShortArg(compiler, Code.LOOP, loopOffset);
 
   patchJump(compiler, compiler.loop.exitJump);
 
-  // Find any break placeholder instructions (which will be CODE_END in the
+  // Find any break placeholder instructions (which will be Code.END in the
   // bytecode) and replace them with real jumps.
   var i = compiler.loop.body;
   while (i < compiler.fn.code.count) {
-    if (compiler.fn.code.data[i] == CODE_END) {
-      compiler.fn.code.data[i] = CODE_JUMP;
+    if (compiler.fn.code.data[i] === Code.END) {
+      compiler.fn.code.data[i] = Code.JUMP;
       patchJump(compiler, i + 1);
       i += 3;
     } else {
@@ -2794,7 +2788,7 @@ function forStatement(compiler) {
 
   // Update and test the iterator.
   callMethod(compiler, 1, "iterate(_)", 10);
-  emitByteArg(compiler, CODE_STORE_LOCAL, iterSlot);
+  emitByteArg(compiler, Code.STORE_LOCAL, iterSlot);
   testExitLoop(compiler);
 
   // Get the current value in the sequence by calling ".iteratorValue".
@@ -2840,7 +2834,7 @@ function whileStatement(compiler) {
 // Unlike expressions, statements do not leave a value on the stack.
 function statement(compiler) {
   if (match(compiler, TokenType.TOKEN_BREAK)) {
-    if (compiler->loop === null) {
+    if (compiler.loop === null) {
       error(compiler, "Cannot use 'break' outside of a loop.");
       return;
     }
@@ -2851,10 +2845,10 @@ function statement(compiler) {
 
     // Emit a placeholder instruction for the jump to the end of the body. When
     // we're done compiling the loop body and know where the end is, we'll
-    // replace these with `CODE_JUMP` instructions with appropriate offsets.
-    // We use `CODE_END` here because that can't occur in the middle of
+    // replace these with `Code.JUMP` instructions with appropriate offsets.
+    // We use `Code.END` here because that can't occur in the middle of
     // bytecode.
-    emitJump(compiler, CODE_END);
+    emitJump(compiler, Code.END);
     return;
   }
 
@@ -2870,7 +2864,7 @@ function statement(compiler) {
     consume(compiler, TokenType.TOKEN_RIGHT_PAREN, "Expect ')' after if condition.");
 
     // Jump to the else branch if the condition is false.
-    var ifJump = emitJump(compiler, CODE_JUMP_IF);
+    var ifJump = emitJump(compiler, Code.JUMP_IF);
 
     // Compile the then branch.
     statement(compiler);
@@ -2878,7 +2872,7 @@ function statement(compiler) {
     // Compile the else branch if there is one.
     if (match(compiler, TokenType.TOKEN_ELSE)) {
       // Jump over the else branch when the if branch is taken.
-      var elseJump = emitJump(compiler, CODE_JUMP);
+      var elseJump = emitJump(compiler, Code.JUMP);
       patchJump(compiler, ifJump);
 
       statement(compiler);
@@ -2896,12 +2890,12 @@ function statement(compiler) {
     // Compile the return value.
     if (peek(compiler) === TokenType.TOKEN_LINE) {
       // Implicitly return null if there is no value.
-      emitOp(compiler, CODE_NULL);
+      emitOp(compiler, Code.NULL);
     } else {
       expression(compiler);
     }
 
-    emitOp(compiler, CODE_RETURN);
+    emitOp(compiler, Code.RETURN);
     return;
   }
 
@@ -2915,7 +2909,7 @@ function statement(compiler) {
     pushScope(compiler);
     if (finishBlock(compiler)) {
       // Block was an expression, so discard it.
-      emitOp(compiler, CODE_POP);
+      emitOp(compiler, Code.POP);
     }
     popScope(compiler);
     return;
@@ -2923,7 +2917,7 @@ function statement(compiler) {
 
   // Expression statement.
   expression(compiler);
-  emitOp(compiler, CODE_POP);
+  emitOp(compiler, Code.POP);
 }
 
 // Creates a matching constructor method for an initializer with [signature]
@@ -2936,8 +2930,8 @@ function statement(compiler) {
 //
 // The allocator method always has a fixed implementation:
 //
-//     CODE_CONSTRUCT - Replace the class in slot 0 with a new instance of it.
-//     CODE_CALL      - Invoke the initializer on the new instance.
+//     Code.CONSTRUCT - Replace the class in slot 0 with a new instance of it.
+//     Code.CALL      - Invoke the initializer on the new instance.
 //
 // This creates that method and calls the initializer with [initializerSymbol].
 function createConstructor(compiler, signature, initializerSymbol) {
@@ -2946,14 +2940,14 @@ function createConstructor(compiler, signature, initializerSymbol) {
 
   // Allocate the instance.
   emitOp(methodCompiler,
-    compiler.enclosingClass.isForeign ? CODE_FOREIGN_CONSTRUCT : CODE_CONSTRUCT);
+    compiler.enclosingClass.isForeign ? Code.FOREIGN_CONSTRUCT : Code.CONSTRUCT);
 
   // Run its initializer.
-  emitShortArg(methodCompiler, (CODE_CALL_0 + signature.arity),
+  emitShortArg(methodCompiler, (Code.CALL_0 + signature.arity),
                initializerSymbol);
 
   // Return the instance.
-  emitOp(methodCompiler, CODE_RETURN);
+  emitOp(methodCompiler, Code.RETURN);
 
   endCompiler(methodCompiler, "", 0);
 }
@@ -2969,7 +2963,7 @@ function defineMethod(compiler, classVariable, isStatic, methodSymbol) {
   loadVariable(compiler, classVariable);
 
   // Define the method.
-  var instruction = isStatic ? CODE_METHOD_STATIC : CODE_METHOD_INSTANCE;
+  var instruction = isStatic ? Code.METHOD_STATIC : Code.METHOD_INSTANCE;
   emitShortArg(compiler, instruction, methodSymbol);
 }
 
@@ -3020,7 +3014,7 @@ function method(compiler, classVariable) {
     methodCompiler.parser.vm.compiler = methodCompiler.parent;
   } else {
     consume(compiler, TokenType.TOKEN_LEFT_BRACE, "Expect '{' to begin method body.");
-    finishBody(methodCompiler, signature.type == SignatureType.SIG_INITIALIZER);
+    finishBody(methodCompiler, signature.type === SignatureType.SIG_INITIALIZER);
     endCompiler(methodCompiler, fullSignature, length);
   }
 
@@ -3030,7 +3024,7 @@ function method(compiler, classVariable) {
   defineMethod(compiler, classVariable, compiler.enclosingClass.inStatic,
                methodSymbol);
 
-  if (signature.type == SignatureType.SIG_INITIALIZER) {
+  if (signature.type === SignatureType.SIG_INITIALIZER) {
     // Also define a matching constructor method on the metaclass.
     signature.type = SignatureType.SIG_METHOD;
     var constructorSymbol = signatureSymbol(compiler, signature);
@@ -3047,7 +3041,7 @@ function method(compiler, classVariable) {
 function classDefinition(compiler, isForeign) {
   // Create a variable to store the class in.
   var classVariable;
-  classVariable.scope = compiler.scopeDepth == -1 ? SCOPE_MODULE : SCOPE_LOCAL;
+  classVariable.scope = compiler.scopeDepth === -1 ? Scope.SCOPE_MODULE : Scope.SCOPE_LOCAL;
   classVariable.index = declareNamedVariable(compiler);
 
   // Make a string constant for the name.
@@ -3067,9 +3061,9 @@ function classDefinition(compiler, isForeign) {
   // used.
   var numFieldsInstruction = -1;
   if (isForeign) {
-    emitOp(compiler, CODE_FOREIGN_CLASS);
+    emitOp(compiler, Code.FOREIGN_CLASS);
   } else {
-    numFieldsInstruction = emitByteArg(compiler, CODE_CLASS, 255);
+    numFieldsInstruction = emitByteArg(compiler, Code.CLASS, 255);
   }
 
   // Store it in its name.
@@ -3135,11 +3129,11 @@ function import_(compiler) {
 
   // Load the module.
   loadCoreVariable(compiler, "System");
-  emitShortArg(compiler, CODE_CONSTANT, moduleConstant);
+  emitShortArg(compiler, Code.CONSTANT, moduleConstant);
   callMethod(compiler, 1, "importModule(_)", 15);
 
   // Discard the unused result value from calling the module's fiber.
-  emitOp(compiler, CODE_POP);
+  emitOp(compiler, Code.POP);
 
   // The for clause is optional.
   if (!match(compiler, TokenType.TOKEN_FOR)) {
@@ -3160,8 +3154,8 @@ function import_(compiler) {
 
     // Load the variable from the other module.
     loadCoreVariable(compiler, "System");
-    emitShortArg(compiler, CODE_CONSTANT, moduleConstant);
-    emitShortArg(compiler, CODE_CONSTANT, variableConstant);
+    emitShortArg(compiler, Code.CONSTANT, moduleConstant);
+    emitShortArg(compiler, Code.CONSTANT, variableConstant);
     callMethod(compiler, 2, "getModuleVariable(_,_)", 22);
 
     // Store the result in the variable here.
@@ -3208,7 +3202,7 @@ function definition( compiler) {
 }
 
 function wrenCompile(vm, module, source, printErrors) {
-  var parser;
+  var parser = Parser();
   parser.vm = vm;
   parser.module = module;
   parser.source = source;
@@ -3217,6 +3211,8 @@ function wrenCompile(vm, module, source, printErrors) {
   parser.currentChar = source;
   parser.currentLine = 1;
   parser.numParens = 0;
+
+  console.log(parser);
 
   // Zero-init the current token. This will get copied to previous when
   // advance() is called below.
@@ -3248,8 +3244,8 @@ function wrenCompile(vm, module, source, printErrors) {
     }
   }
 
-  emitOp(compiler, CODE_NULL);
-  emitOp(compiler, CODE_RETURN);
+  emitOp(compiler, Code.NULL);
+  emitOp(compiler, Code.RETURN);
 
   // See if there are any implicitly declared module-level variables that never
   // got an explicit definition.
@@ -3269,33 +3265,33 @@ function wrenBindMethodCode(classObj, fn) {
   for (;;) {
     var instruction = fn.code.data[ip++];
     switch (instruction) {
-      case CODE_LOAD_FIELD:
-      case CODE_STORE_FIELD:
-      case CODE_LOAD_FIELD_THIS:
-      case CODE_STORE_FIELD_THIS:
+      case Code.LOAD_FIELD:
+      case Code.STORE_FIELD:
+      case Code.LOAD_FIELD_THIS:
+      case Code.STORE_FIELD_THIS:
         // Shift this class's fields down past the inherited ones. We don't
         // check for overflow here because we'll see if the number of fields
         // overflows when the subclass is created.
         fn.code.data[ip++] += classObj.superclass.numFields;
         break;
 
-      case CODE_SUPER_0:
-      case CODE_SUPER_1:
-      case CODE_SUPER_2:
-      case CODE_SUPER_3:
-      case CODE_SUPER_4:
-      case CODE_SUPER_5:
-      case CODE_SUPER_6:
-      case CODE_SUPER_7:
-      case CODE_SUPER_8:
-      case CODE_SUPER_9:
-      case CODE_SUPER_10:
-      case CODE_SUPER_11:
-      case CODE_SUPER_12:
-      case CODE_SUPER_13:
-      case CODE_SUPER_14:
-      case CODE_SUPER_15:
-      case CODE_SUPER_16: {
+      case Code.SUPER_0:
+      case Code.SUPER_1:
+      case Code.SUPER_2:
+      case Code.SUPER_3:
+      case Code.SUPER_4:
+      case Code.SUPER_5:
+      case Code.SUPER_6:
+      case Code.SUPER_7:
+      case Code.SUPER_8:
+      case Code.SUPER_9:
+      case Code.SUPER_10:
+      case Code.SUPER_11:
+      case Code.SUPER_12:
+      case Code.SUPER_13:
+      case Code.SUPER_14:
+      case Code.SUPER_15:
+      case Code.SUPER_16: {
         // Skip over the symbol.
         ip += 2;
 
@@ -3305,7 +3301,7 @@ function wrenBindMethodCode(classObj, fn) {
         break;
       }
 
-      case CODE_CLOSURE: {
+      case Code.CLOSURE: {
         // Bind the nested closure too.
         // JS lint complains because of the previous constant?
         var constant2 = (fn.code.data[ip] << 8) | fn.code.data[ip + 1];
@@ -3337,3 +3333,36 @@ function wrenMarkCompiler(vm, compiler) {
     compiler = compiler.parent;
   } while (compiler !== null);
 }
+
+////////////////////////////////////////////////////////////////////////////////
+// Adding properties to this object will make them available to outside scripts.
+module.exports = {
+  sCompiler: sCompiler,
+
+  // Compiles [source], a string of Wren source code located in [module], to an
+  // [ObjFn] that will execute that code when invoked. Returns `null` if the
+  // source contains any syntax errors.
+  //
+  // If [printErrors] is `true`, any compile errors are output to stderr.
+  // Otherwise, they are silently discarded.
+  wrenCompile: wrenCompile,
+
+  // When a class is defined, its superclass is not known until runtime since
+  // class definitions are just imperative statements. Most of the bytecode for a
+  // a method doesn't care, but there are two places where it matters:
+  //
+  //   - To load or store a field, we need to know the index of the field in the
+  //     instance's field array. We need to adjust this so that subclass fields
+  //     are positioned after superclass fields, and we don't know this until the
+  //     superclass is known.
+  //
+  //   - Superclass calls need to know which superclass to dispatch to.
+  //
+  // We could handle this dynamically, but that adds overhead. Instead, when a
+  // method is bound, we walk the bytecode for the function and patch it up.
+  wrenBindMethodCode: wrenBindMethodCode,
+
+  // Reaches all of the heap-allocated objects in use by [compiler] (and all of
+  // its parents) so that they are not collected by the GC.
+  wrenMarkCompiler: wrenMarkCompiler
+};

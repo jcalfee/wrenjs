@@ -1,1 +1,1 @@
-require('./compiler');
+this.compiler = require('./compiler');
