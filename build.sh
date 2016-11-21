@@ -4,7 +4,7 @@
 source emsdk/emsdk_portable/emsdk_env.sh
 
 # clone wren
-#git clone https://github.com/munificent/wren.git
+git clone https://github.com/munificent/wren.git
 
 # Create a place for our outgoing wren.js file
 mkdir -p out
@@ -16,10 +16,13 @@ cd wren
 make clean
 
 # Use emscripten to generate a bytecode libwren.a, with extras
-emmake make bytecode
+emmake make shared
 
 # Move out of the wren directory
 cd ..
 
+# Copy our bytecode lib
+cp wren/lib/libwren.so src/wren.bc
+
 # Compile the custom libwren.a with the js interface
-$EMSCRIPTEN/emcc --bind src/shim.cpp wren/lib/wren.bc -o out/wren.js
+$EMSCRIPTEN/emcc --bind src/shim.cpp src/wren.bc -o out/wren.js
