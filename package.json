@@ -1,0 +1,8 @@
+{
+  "name": "wren",
+  "description": "The JavaScript port of the wren programming language",
+  "license": "MIT",
+  "devDependencies": {
+    "webpack": "^1.13.3"
+  }
+}
